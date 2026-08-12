@@ -163,11 +163,11 @@ export interface UserListResult {
  * relative "/api/v1" is used, which relies on the Vercel rewrite / Vite dev
  * proxy. The ngrok URL is NEVER hardcoded in source — only via this env var.
  */
-const configuredApiBase = (
-  (import.meta.env.VITE_API_URL as string | undefined) ?? ""
-)
-  .trim()
-  .replace(/\/+$/, "");
+// const configuredApiBase = (
+//   (import.meta.env.VITE_API_URL as string | undefined) ?? ""
+// )
+//   .trim()
+//   .replace(/\/+$/, "");
 
 /** API client with automatic access-token attachment and refresh-on-401. */
 export const api: AxiosInstance = axios.create({
