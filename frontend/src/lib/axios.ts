@@ -159,7 +159,7 @@ export interface UserListResult {
 /** API client with automatic access-token attachment and refresh-on-401. */
 export const api: AxiosInstance = axios.create({
   baseURL: "/api/v1",
-  headers: { "Content-Type": "application/json" },
+  headers: { "Content-Type": "application/json", "ngrok-skip-browser-warning": "true", },
 });
 
 /** In-memory access token (never persisted). */
