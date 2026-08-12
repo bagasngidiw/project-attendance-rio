@@ -2,10 +2,13 @@
 
 > Prepared by the Senior Designer per `DESIGNER.md`. This document is the implementation contract for the Developer Agent.
 >
-> **Issue**: User request (from `.opencode/prompts/DESIGNER.md`):
-> *"akses env, config, tidak apa apa, aku ingin kamu create collection untuk mongodb, karena sekarang sudah ke mongodb cluster — coba buat data collection yang berhubungan dengan accessing websitenya, seperti role, user, akses menu untuk superadmin, jadi show semuanya"*
+> **Issue**: User request (from `.opencode/prompts/DESIGNER.md` §USER REQUEST FORMAT):
+> *Frontend is live on Vercel, backend is behind the ngrok tunnel `https://walk-sycamore-sublevel.ngrok-free.dev` (connected via Vercel rewrites). The app logo `<img src>` returns a relative path (`/api/v1/platform/branding-assets/logo-*.png`) that does not render on live Vercel. The user asks: should the ngrok URL be prepended to asset/attachment URLs so the logo and all employee attachments (izin/sakit/cuti/perjalanan dinas detail popups, approval inbox, approval history) are visible? They need it working to present tomorrow.*
 >
-> **Interpretation**: The application now connects to MongoDB Atlas (`backend/.env` → `MONGO_URI` = Atlas `mongodb+srv://` URI). The user wants the website-access data collections (roles, users, superadmin menu access) created/populated on the cluster and then **show everything** (a full dump/inspection of that data).
+> **Short answer to the user's question — prepending the ngrok URL is NOT the correct fix.** Verified from source:
+> - The ngrok tunnel URL is **ephemeral** (changes every tunnel restart) and hardcoding it into source/URLs breaks after the next restart.
+> - A browser `<img src>` / `<a href>` request **cannot send the `ngrok-skip-browser-warning` header** that the axios client already carries (`frontend/src/lib/axios.ts:162`). Directly hitting ngrok from the browser without that header returns ngrok's HTML interstitial instead of the image/file.
+> - The correct, robust fix is to load the logo through the **existing axios client as a blob + object URL** (the exact pattern already proven for attachments in `RequestAttachments.tsx`), keeping all URLs relative and letting the existing Vercel rewrite `/api/:path*` → ngrok do the routing.
 
 ---
 
@@ -13,42 +16,35 @@
 
 ### User Request
 
-1. Create the MongoDB collections related to website access on the current (Atlas) cluster.
-2. The collections in question: **roles**, **users**, and **superadmin menu access** (plus the supporting `permissions`, `role_permissions`, `user_roles` collections that make access work).
-3. After creation, **show everything** — a readable, complete report of roles, users, role→permission mappings, user→role memberships, and the SUPER_ADMIN navigation/menu tree.
+1. Make the application logo render on the live Vercel origin (backend on ngrok).
+2. Make every employee attachment (izin / sakit / cuti / perjalanan dinas detail popups) and approval surfaces (kotak masuk persetujuan, riwayat persetujuan / drill-down) work on live Vercel.
+3. The user proposed prepending `https://walk-sycamore-sublevel.ngrok-free.dev` to each asset/attachment URL — **evaluate and implement the safe alternative**.
 
-### Problem
+### Problem (verified from source)
 
-- The access collections are defined in code (`backend/src/infrastructure/models/*`) but only exist in the database after the app boots and the idempotent seed runs. On a freshly-configured Atlas cluster there may be no collections at all yet.
-- There is no standalone, repeatable way to (a) ensure the access collections exist and are populated and (b) dump all access data in one place.
-- The SUPER_ADMIN menu access tree is computed at runtime (`buildNavigationFor` + `NAVIGATION_CATALOG`) and is not displayed anywhere as a report.
-- Existing UI (RBAC console, Users page) shows pieces, but not everything together, and requires a running browser + login.
+1. **Logo**: backend returns a **relative URL** `url: /api/v1/platform/branding-assets/${key}` (`backend/src/application/branding.service.js:143`). The frontend stores it verbatim as `logoUrl` (`frontend/src/lib/branding.ts:121`) and renders it in `<img src>` in `Navbar.tsx:54`, `SidebarLogo.tsx:14`, `Login/index.tsx:169`, `ThemePreview.tsx:26`, `BrandingSettingsPanel.tsx:167`. On Vercel the browser requests `/api/v1/platform/branding-assets/...` → Vercel rewrite → ngrok. Failure modes:
+   - **(a)** ngrok serves its HTML interstitial for browser-like requests without `ngrok-skip-browser-warning`; an `<img>` request cannot set that header → broken image (most likely current cause; the user already needed the header for axios calls).
+   - **(b)** If the deployed Vercel build predates the correct `frontend/vercel.json` (it was previously at `frontend/src/vercel.json`), `/api/...` falls through to the SPA fallback `/(.*)` → `/index.html` → HTML returned for the image path.
+2. **Attachments**: `RequestAttachments.tsx` (used by `RequestDetailDialog.tsx:66` and approval `RequestDrillDownDialog.tsx:125`) already downloads via `attachmentApi.download(id)` → axios `responseType: "blob"` → object URL → programmatic download. Attendance selfies use the same blob pattern (`attendanceApi.getMedia`). **No raw `<a href>` / `window.open` / URL rendering exists anywhere** (verified by repo-wide grep). Attachments therefore already traverse the header-carrying axios client and need **no code change** — only deployment verification.
 
 ### Expected Result
 
-- `backend/scripts/show-access-collections.js` — a standalone Node script that:
-  1. Connects to the configured MongoDB (`config.mongoUri`, which is now the Atlas URI).
-  2. Ensures the access collections exist and are populated by invoking the existing idempotent `seedDatabase(...)` (same wiring as `scripts/reset-database.js`).
-  3. Prints a complete, human-readable report:
-     - Collections present in the connected database.
-     - Roles (key, name, level, dataScope, status) with their permission keys.
-     - Users (username, name, email, status, role keys) with NO secret fields (`passwordHash`, `passwordHistory`, `tokenVersion` internals) — plus role membership.
-     - The **SUPER_ADMIN menu/navigation tree** built from the SUPER_ADMIN role's effective permissions via `buildNavigationFor(...)`.
-- `npm run access:show` script entry in `backend/package.json`.
-- Pure report-building helpers under `backend/src/domain/access-report.js` so the formatting logic is unit-testable without a database.
-- No frontend changes. No schema changes. No RBAC changes. No secret values printed.
+- The logo renders on the live Vercel origin with the backend on ngrok.
+- Attachment downloads (detail popups + approval inbox/history drill-down) work on live Vercel.
+- No ngrok URL is hardcoded anywhere in source.
+- Backend code is **unchanged** (relative URLs preserved).
 
 ### Issue Classification
 
-New Feature (operational tooling) — backend only; no schema/API/RBAC/frontend changes.
+Bug Fix (production asset/attachment loading across Vercel ↔ ngrok) — frontend + deployment configuration only.
 
 ### Scope
 
-- New: `backend/scripts/show-access-collections.js`
-- New: `backend/src/domain/access-report.js` (pure helpers)
-- Modify: `backend/package.json` (add `access:show` script)
-- New test: `backend/test/unit/access-report.test.js`
-- Documentation: this TODO is the spec; no `project-context.md` update required beyond the `access:show` command (optional §22 addition).
+- **Frontend (code)**: `frontend/src/lib/axios.ts`, `frontend/src/lib/branding.ts`, `frontend/src/features/branding/BrandingSettingsPanel.tsx`, `frontend/src/features/branding/ThemePreview.tsx` (logo loading path only).
+- **Frontend (config)**: optional use of the already-defined `VITE_API_URL` env var (`frontend/.env`) as a production axios baseURL override.
+- **Deployment (operational, no repo change needed)**: confirm `frontend/vercel.json` is at the Vercel project root and redeploy.
+- **Backend**: **NO changes** (verified correct).
+- **Database / API / RBAC / Navigation**: **NO changes**.
 
 ---
 
@@ -56,40 +52,43 @@ New Feature (operational tooling) — backend only; no schema/API/RBAC/frontend 
 
 ### Relevant Frontend
 
-- Not affected. The RBAC console (`frontend/src/features/rbac-admin/RbacConsolePage.tsx`) and Users page already expose interactive views; this task adds a backend-only CLI report and must not change the frontend.
+- `frontend/src/lib/axios.ts` — single shared `api` instance (`baseURL: "/api/v1"`), `ngrok-skip-browser-warning: true` header (line 162), `attachmentApi.download` blob path (line 608-613), `attachmentApi.downloadUrl` (line 606, unused), `brandingApi.public()` (line 367).
+- `frontend/src/lib/branding.ts` — module store; `applyIdentity` (106-124) stores `logoUrl = identity.logo?.url`; `bootstrapBranding()` (137-147) runs before React; `useBranding()` (150-152).
+- `frontend/src/main.tsx:8` — `bootstrapBranding()` fire-and-forget.
+- `<img src={logoUrl}>` consumers: `frontend/src/components/layout/navbar/Navbar.tsx` (52-54), `frontend/src/components/layout/sidebar/SidebarLogo.tsx` (12-14), `frontend/src/pages/Login/index.tsx` (167-169), `frontend/src/features/branding/ThemePreview.tsx` (25-26).
+- `frontend/src/features/branding/BrandingSettingsPanel.tsx` — uses `active.logo.url` directly (165-167) and passes it to `ThemePreview` (230).
+- `frontend/src/features/requests/RequestAttachments.tsx` — blob download (verified).
+- `frontend/src/features/requests/RequestDetailDialog.tsx:66`, `frontend/src/features/approvals/RequestDrillDownDialog.tsx:125` — render `<RequestAttachments>`.
+- `frontend/vercel.json` — rewrites `/api/:path*` → ngrok, `/(.*)` → index.html.
+- `frontend/.env` — defines `VITE_API_URL=http://localhost:5000` (currently unused by any code).
 
 ### Relevant Backend
 
-- `backend/server.js` — `buildApp(config)` returns `repositories` including `roleRepository`, `permissionRepository`, `userRepository`, `leaveTypeRepository`, `sicknessTypeRepository`, `approvalConfigurationRepository` (pattern used by `scripts/reset-database.js`).
-- `backend/src/infrastructure/seed/seed.js` — `seedDatabase({ roleRepository, permissionRepository, userRepository, passwordHasher, config, leaveTypeRepository, sicknessTypeRepository, approvalConfigurationRepository, logger })`; idempotent; provisions permissions, roles (SUPER_ADMIN always; others when `config.seed.demoData !== false`), role→permission mappings, SUPER_ADMIN user, demo users, approval configs.
-- `backend/src/infrastructure/config.js` — `createConfig()` exposes `config.mongoUri` (Atlas URI via `MONGO_URI`), `config.seed.*`.
-- Models (collections): `user.model.js` (`users`), `role.model.js` (`roles`), `permission.model.js` (`permissions`), `role-permission.model.js` (`role_permissions`), `user-role.model.js` (`user_roles`).
-- Repositories: `user.repository.js` (`list`, `findByUsername`, `findByIds`), `role.repository.js` (`listAll`, `findByKey`), `permission.repository.js` (`listAll`, `permissionKeysForRole`), `user-role.repository.js` (`findByUserId`).
-- `backend/src/application/navigation.service.js` — `buildNavigationFor(permissions)` → visible tree (pure, no I/O).
-- `backend/src/domain/navigation-catalog.js` — `NAVIGATION_CATALOG` (the menu tree definition).
-- `backend/src/domain/permissions.js` — `PERMISSION_DEFINITIONS`, `ALL_PERMISSIONS`, `assertRegisteredPermission`.
-- `backend/scripts/reset-database.js` — the wiring pattern to copy for a standalone script.
+- `backend/src/application/branding.service.js:143` — builds relative logo `url`.
+- `backend/src/presentation/routes/branding.routes.js:32-36` — public asset route `GET /:token` under `/api/v1/platform/branding-assets` (no auth).
+- `backend/src/presentation/controllers/branding.controller.js:60-73` — `getAsset` serves the stored file (nosniff, CSP for SVG, cache 86400).
+- `backend/src/presentation/controllers/attachment.controller.js:55-71` — `GET /attachments/:id/download` (auth `files:download`).
+- `backend/src/presentation/routes/attachment.routes.js:36-40` — attachment download route.
+- `backend/server.js:577-578` — mounts branding asset + public branding routes.
 
 ### Relevant Database
 
-- Collections involved (all existing, no schema change): `users`, `roles`, `permissions`, `role_permissions`, `user_roles`.
-- The menu/access tree is **not stored** — it is derived at runtime from `role_permissions` + `NAVIGATION_CATALOG`.
+- Not affected. Logo storage keys are plain filenames under `backend/branding-assets/` (local disk, served by the tunneled backend).
 
 ### Relevant API
 
-- No API changes. The script connects directly via Mongoose (same as `reset-database.js`); it does not go through HTTP.
+- `GET /api/v1/platform/branding` (public) → returns `logo.url` (relative). **Keep relative.**
+- `GET /api/v1/platform/branding-assets/:token` (public) — asset bytes.
+- `GET /api/v1/attachments/:id/download` (authenticated) — attachment bytes.
+- No endpoint changes required.
 
-### Relevant Authentication
+### Relevant Authentication / Authorization / RBAC
 
-- Not affected. The script is an operator/CLI tool connecting via `config.mongoUri`; no JWT/session logic.
-
-### Relevant Authorization / RBAC
-
-- Not affected. The script only reads data that the seed itself creates; it uses the SUPER_ADMIN role's granted permissions to build the menu tree. It does not mutate RBAC beyond what `seedDatabase` already does (idempotent).
+- Not affected. Public branding asset route stays public; attachment download stays `files:download`-guarded; axios blob requests carry the Bearer token.
 
 ### Relevant Navigation
 
-- The SUPER_ADMIN menu tree is produced from `buildNavigationFor(superAdminPermissionKeys)` — reuse, do not duplicate the logic.
+- Not affected.
 
 ---
 
@@ -97,236 +96,313 @@ New Feature (operational tooling) — backend only; no schema/API/RBAC/frontend 
 
 | Area | Status | Impact |
 |------|--------|--------|
-| Frontend | Not Affected | No UI changes. |
-| Backend | Affected | New script + new pure helper module + package.json script entry. |
-| Database | Potentially Affected | Script runs the existing idempotent seed against the connected DB (creates missing collections/data on a fresh Atlas cluster). No schema change. |
-| API | Not Affected | No endpoint changes. |
-| Authentication | Not Affected | No auth changes. |
-| Authorization / RBAC | Not Affected | No permission changes; reads SUPER_ADMIN permissions. |
-| Navigation | Not Affected | Menu tree is reused from `buildNavigationFor`. |
-| UI/UX | Not Affected | CLI output only. |
-| Business Logic | Not Affected | No business-rule changes. |
-| Validation | Not Affected | No DTO/validation changes. |
-| File Storage | Not Affected | — |
-| Notifications | Not Affected | — |
-| Reports | Not Affected | — |
-| Audit Logs | Not Affected | Script is an inspection tool; no audit events are recorded (do not add audit recording to a read-only CLI dump). |
-| Performance | Not Affected | One-off operator script. |
-| Testing | Affected | New unit test for `access-report.js` helpers; manual run of the script as verification. |
+| Frontend | **Affected** | Logo loading path (`lib/branding.ts`, `lib/axios.ts`, `BrandingSettingsPanel`, `ThemePreview`); optional env base URL |
+| Backend | Not Affected | No code change; relative URLs stay as-is |
+| Database | Not Affected | No schema/data change |
+| API | Not Affected | No endpoint/contract change |
+| Authentication | Not Affected | Token/session flows untouched |
+| Authorization / RBAC | Not Affected | Permission keys untouched |
+| Navigation | Not Affected | Sidebar/menu untouched |
+| Storage | Not Affected | Still local disk behind ngrok |
+| Deployment/Infrastructure | **Affected** | `frontend/vercel.json` placement + Vercel redeploy; optional `VITE_API_URL` |
 
 ---
 
 ## Functional Requirements
 
-### FR-001: Create `backend/src/domain/access-report.js` (pure report helpers)
+### FR-001: Load the branding logo via axios blob + object URL
 
-**Type:** Backend (new domain module — pure, no I/O, no Mongoose imports)
+**Type:** Bug Fix / Frontend
 
 **Priority:** High
 
-**Status:** Proposed
+**Status:** Implemented — verified
+
+- [x] Implement requirement
 
 **Description:**
-Extract all formatting/sanitization logic into a framework-free module so it can be unit-tested and reused by the script. The module must never import Mongoose or repositories — it transforms already-loaded data into report rows.
+Replace the raw `<img src="/api/v1/platform/branding-assets/...">` rendering path with a blob fetch through the existing `api` instance (which already sends `ngrok-skip-browser-warning`) and expose a `URL.createObjectURL(...)` as `logoUrl`. This works on Vercel because the request is routed by the existing Vercel rewrite, and it carries the header ngrok requires. No ngrok URL is hardcoded.
 
 **Current Behavior:**
-Not present — formatting logic does not exist anywhere.
+`applyIdentity` stores the backend-relative path (`/api/v1/platform/branding-assets/logo-*.png`) as `logoUrl`; every `<img src>` makes a browser request that cannot set `ngrok-skip-browser-warning`, so on Vercel → ngrok the logo fails (interstitial or SPA fallback HTML).
 
 **Expected Behavior:**
-The module exports pure functions that the script uses to build report rows:
-
-```js
-// Sanitized user row: NO passwordHash/passwordHistory/__v/etc.
-sanitizeUser(user) -> { id, username, name, email, status, roleIds }
-
-// Role row with sorted permission keys
-roleRow(role, permissionKeys) -> { key, name, level, levelLabel, dataScope, status, permissions }
-
-// User row with resolved role keys
-userRow(user, roleKeysById) -> { username, name, email, status, roles }
-
-// SUPER_ADMIN menu tree (wrap buildNavigationFor; return as-is)
-// The tree is already plain serializable objects from navigation.service.js
-```
+`logoUrl` is an object URL created from a blob fetched via `api` (header present). The logo renders in the Navbar, Sidebar, Login page, ThemePreview, and BrandingSettingsPanel on the live Vercel origin. Local dev keeps working via the Vite proxy.
 
 **Affected Files:**
-- `backend/src/domain/access-report.js` (new)
+- `frontend/src/lib/axios.ts` (add reusable blob helper; keep `api` config)
+- `frontend/src/lib/branding.ts` (`applyIdentity` / `applyBranding` / `bootstrapBranding` — resolve logo to object URL)
+- `frontend/src/components/layout/navbar/Navbar.tsx` (verify only — reads `useBranding().logoUrl`)
+- `frontend/src/components/layout/sidebar/SidebarLogo.tsx` (verify only)
+- `frontend/src/pages/Login/index.tsx` (verify only)
+- `frontend/src/main.tsx` (verify `bootstrapBranding()` stays non-blocking)
 
 **Implementation Instructions:**
-1. Create `backend/src/domain/access-report.js`.
-2. `sanitizeUser(user)` — return a shallow pick of `{ id: String(user._id ?? user.id), username, name, email, status, roleIds: (user.roleIds ?? []).map(String) }`. Never include `passwordHash`, `passwordHistory`, `failedLoginAttempts`, `lockedUntil`, `tokenVersion`, `passwordVersion`, `passwordChangedAt`.
-3. `roleRow(role, permissionKeys)` — `{ key: role.key, name: role.name, level: role.level, levelLabel: role.levelLabel, dataScope: role.dataScope, status: role.status, permissions: [...permissionKeys].sort() }`.
-4. `userRow(user, roleKeysById)` — `roleKeysById` is a `Map<roleIdString, roleKey>`; resolve `user.roleIds` → sorted role keys; output `{ username, name, email, status, roles }`.
-5. `buildMenuTree(permissionKeys)` — `return require("./navigation.service")?.buildNavigationFor(permissionKeys)` — actually import `buildNavigationFor` from `../application/navigation.service` at module top; the helper is a thin wrapper so callers don't import the application layer directly. (Domain modules are normally pure; `navigation.service.js` is itself pure — importing it is acceptable here because it has no I/O. If this violates the layering rule, import `buildNavigationFor` inside the function to keep the top of the file Mongoose-free.)
-6. Do not add console.log here — the script owns printing.
+1. In `frontend/src/lib/axios.ts`, add an exported helper (keep it next to `attachmentApi`):
+   - `fetchBlobObjectUrl(relativePath: string): Promise<string>` → `const res = await api.get(relativePath, { responseType: "blob" }); return URL.createObjectURL(res.data as Blob);`
+   - Reuse it later for any surface that needs an inline file (logo preview, etc.).
+2. In `frontend/src/lib/branding.ts`:
+   - In `applyIdentity` (or the calling `applyBranding`), when `identity.logo?.url` is present and starts with `/api/v1`, call `fetchBlobObjectUrl(identity.logo.url)`; store the **object URL** in `state.logoUrl`.
+   - On failure (reject), fall back to the original relative `logo.url` string (behavior identical to today) — never throw out of the bootstrap.
+   - Track the previous object URL and `URL.revokeObjectURL(previous)` when replacing it (memory hygiene when the logo changes).
+   - Keep `applyIdentity`'s non-logo behavior synchronous; only the logo resolution is async.
+3. Ensure `bootstrapBranding()` remains fire-and-forget (already `.then(...).catch(...)`); do not block `main.tsx` render.
+4. Do NOT change the consumers (`Navbar`, `SidebarLogo`, `Login`) — they already read `logoUrl` from `useBranding()`.
 
 **Dependencies:**
-- None (used by FR-002).
+- None (self-contained frontend change).
 
 **Must Preserve:**
-- No secrets in any returned object.
-- Sort determinism: permissions and role keys sorted lexicographically.
+- Backend-relative logo URL format (never change `branding.service.js`).
+- `bootstrapBranding()` anti-flash behavior (defaults first, theme swap async).
+- Local dev behavior via Vite proxy.
+- All other branding identity fields.
 
 **Acceptance Criteria:**
-- [x] `sanitizeUser` never returns `passwordHash`/`passwordHistory`.
-- [x] `roleRow` returns sorted permissions.
-- [x] `userRow` resolves role keys via the map; unknown roleIds are ignored.
-- [x] `buildMenuTree` returns the navigation tree shape from `buildNavigationFor`.
+- [ ] On the live Vercel origin, the logo renders in Navbar, Sidebar, and Login page with the backend on ngrok. *(runtime — requires live Vercel + tunnel; operator check)*
+- [x] In local dev (`npm run dev`), the logo still renders. *(verified: build + lint pass; Vite proxy path unchanged)*
+- [x] No ngrok URL string exists in `frontend/src/**`. *(verified: only `VITE_API_URL` env override, never hardcoded)*
+- [x] Changing/uploading a new logo in the admin panel updates the rendered logo without leaving stale object URLs (no visible memory leak). *(verified: object URL generation guard + revoke in `branding.ts`)*
+- [x] If the tunnel/backend is unreachable, the app still boots with default branding (no crash). *(verified: `resolveLogoObjectUrl` catches and keeps raw URL; bootstrap non-blocking)*
 
 #### Implementation Notes
 
 Implemented in:
 
-- `backend/src/domain/access-report.js` (new) — `sanitizeUser` (strips `passwordHash`, `passwordHistory`, `passwordVersion`, `passwordChangedAt`, `failedLoginAttempts`, `lockedUntil`, `tokenVersion`, `__v`, misc), `roleRow` (sorted permissions), `userRow` (role-key map resolution, unknown ids ignored), `buildMenuTree` (lazy import of the existing pure `buildNavigationFor` from `application/navigation.service.js` to avoid duplicate navigation logic).
+- `frontend/src/lib/axios.ts` — added exported `fetchBlobObjectUrl(relativePath)` (blob fetch via the `api` instance which carries `ngrok-skip-browser-warning`).
+- `frontend/src/lib/branding.ts` — `applyIdentity` now upgrades a relative `/api/...` logo URL to an object URL via `fetchBlobObjectUrl`, guarded by a monotonic `identityGeneration` (stale fetches are revoked, never applied); the previous object URL is revoked on replacement/removal; failure falls back to the raw relative URL. `bootstrapBranding()` remains fire-and-forget.
 
 Verified:
 
-- Unit test `access-report.test.js` covers secret stripping, sorting, unknown-roleId handling, empty permission set, and wildcard grant.
-- Output of `scripts/show-access-collections.js` contains no secret fields.
+- `npm run build` (tsc -b && vite build) passes — no type errors.
+- `npm run lint` passes — no ESLint errors.
 
 ---
 
-### FR-002: Create `backend/scripts/show-access-collections.js`
+### FR-002: Fix the live logo preview in BrandingSettingsPanel + ThemePreview
 
-**Type:** Backend (new standalone script)
+**Type:** Bug Fix / Frontend
 
 **Priority:** High
 
-**Status:** Proposed
+**Status:** Implemented — verified
+
+- [x] Implement requirement
 
 **Description:**
-A standalone, idempotent inspection script that (1) connects to the configured MongoDB (the Atlas cluster), (2) ensures the access collections exist and are populated by running the existing `seedDatabase(...)`, and (3) prints the full website-access report: collections, roles + permissions, users + role memberships, and the SUPER_ADMIN menu tree.
+The admin branding panel renders `active.logo.url` directly (`BrandingSettingsPanel.tsx:165-167`) and passes it to `ThemePreview` (`:230`), so the preview fails on Vercel for the same reason as FR-001. Route it through the same blob/object-URL helper.
 
 **Current Behavior:**
-No such script exists.
+`<img src={active.logo.url}>` uses the raw relative backend path → fails on Vercel ↔ ngrok.
 
 **Expected Behavior:**
-Running `node scripts/show-access-collections.js` (or `npm run access:show` in `backend/`) prints a readable report and exits 0 on success, non-zero on failure. Never prints secrets. Works against Atlas via `config.mongoUri`.
+The current-logo preview in `BrandingSettingsPanel` and `ThemePreview` renders from an object URL fetched via `api`.
 
 **Affected Files:**
-- `backend/scripts/show-access-collections.js` (new)
-- `backend/package.json` (add `"access:show": "node scripts/show-access-collections.js"` to `scripts`)
+- `frontend/src/features/branding/BrandingSettingsPanel.tsx` (logo preview at 165-167; prop at 230)
+- `frontend/src/features/branding/ThemePreview.tsx` (consumes `logoUrl` prop; verify only)
+- (shared helper from FR-001)
 
 **Implementation Instructions:**
-1. Mirror the header/usage style of `backend/scripts/reset-database.js`.
-2. Top of file: `require("dotenv").config();` then require `mongoose`, `createConfig`, `buildApp`, `seedDatabase`, `BcryptPasswordHasher`, the report helpers from `../src/domain/access-report`, `{ UserModel }`, `{ RoleModel }`, `{ PermissionModel }`, `{ RolePermissionModel }`, `{ UserRoleModel }` from their model files.
-3. Connect:
-   ```js
-   const config = createConfig();
-   const uri = config.mongoUri;
-   await mongoose.connect(uri);
-   ```
-   **Do NOT print `uri`** (it contains credentials). Print only sanitized connection info, e.g. `mongoose.connection.host` + `mongoose.connection.name`.
-4. Ensure data exists (same wiring as `reset-database.js`):
-   ```js
-   const { repositories } = buildApp(config);
-   await seedDatabase({
-     roleRepository: repositories.roleRepository,
-     permissionRepository: repositories.permissionRepository,
-     userRepository: repositories.userRepository,
-     leaveTypeRepository: repositories.leaveTypeRepository,
-     sicknessTypeRepository: repositories.sicknessTypeRepository,
-     approvalConfigurationRepository: repositories.approvalConfigurationRepository,
-     passwordHasher: new BcryptPasswordHasher(config.security.bcryptRounds),
-     config,
-   });
-   ```
-5. Section 1 — Collections:
-   ```js
-   const collections = await mongoose.connection.db.collections();
-   const names = collections.map((c) => c.collectionName).sort();
-   // print "Collections (n): ..."
-   ```
-6. Section 2 — Roles + permissions:
-   - `const roles = await repositories.roleRepository.listAll();`
-   - For each role: `const keys = await repositories.permissionRepository.permissionKeysForRole(role.id);`
-   - Print `roleRow(role, keys)` for each (use `console.log` with a simple table-ish format; e.g. `[ROLE] key=... name=... level=... scope=... status=...` then `  permissions: a, b, c`).
-7. Section 3 — Users + role memberships:
-   - `const { items: users } = await repositories.userRepository.list({ page: 1, pageSize: 10000 });`
-   - Build `Map<roleId, roleKey>` from the roles loaded in step 6.
-   - Print `userRow(sanitizeUser(u), roleKeysById)` for each user (`[USER] username=... name=... email=... status=... roles=...`).
-8. Section 4 — SUPER_ADMIN menu tree:
-   - `const superRole = await repositories.roleRepository.findByKey("SUPER_ADMIN");`
-   - If found: `const superKeys = await repositories.permissionRepository.permissionKeysForRole(superRole.id);`
-   - `const tree = buildMenuTree(superKeys);`
-   - Print the tree as indented JSON (`console.log(JSON.stringify(tree, null, 2))`) under a `[SUPER_ADMIN MENU]` heading. If `superRole` is null (should not happen after seed), print a warning and continue.
-9. `await mongoose.disconnect();` at the end; wrap the whole IIFE in `.catch((err) => { console.error("[access:show] failed:", err); process.exit(1); })` (same as `reset-database.js`).
-10. Add to `backend/package.json` `scripts`: `"access:show": "node scripts/show-access-collections.js"`.
+1. In `BrandingSettingsPanel.tsx`, replace direct `<img src={active.logo.url}>` with a resolved object URL:
+   - Add a small effect/local state that calls `fetchBlobObjectUrl(active.logo.url)` when `active.logo?.url` changes and stores the object URL; fall back to the raw URL on failure.
+   - Revoke the previous object URL when replacing.
+2. Pass the resolved object URL (or `null`) as `logoUrl` to `ThemePreview` (line 230).
+3. After a successful upload (`uploadLogo`) or save, invalidate/re-resolve the preview object URL so the new logo shows immediately.
 
 **Dependencies:**
-- FR-001 (uses `access-report.js` helpers).
+- FR-001 (helper).
 
 **Must Preserve:**
-- Never print `config.mongoUri`, `passwordHash`, `passwordHistory`, or any `.env` secret.
-- The seed remains idempotent — running the script repeatedly must not duplicate roles/users.
-- Do not modify any model, repository, service, route, or controller.
-- Do not record audit events (this is a read-only CLI dump; the seed already handles its own logging).
+- Upload flow (`brandingApi.uploadLogo`), remove flow, and the identity save flow.
+- Existing settings form behavior.
 
 **Acceptance Criteria:**
-- [x] `npm run access:show` (in `backend/`) runs successfully against the configured Atlas cluster.
-- [x] Report prints collections, roles+permissions, users+roles, and SUPER_ADMIN menu tree.
-- [x] Output contains no `passwordHash`, `passwordHistory`, or `MONGO_URI` value.
-- [x] Running the script twice is safe (no duplicates created).
-- [x] `npm test` in `backend/` stays green.
+- [ ] In the admin branding panel on live Vercel, the current logo preview renders. *(runtime — requires live Vercel + tunnel; operator check)*
+- [x] Uploading a new logo updates the preview immediately. *(verified: `useAssetObjectUrl(active.logo.url)` re-resolves when the URL changes; fallback `?? active.logo.url`)*
+- [x] No ngrok URL hardcoded. *(verified)*
 
 #### Implementation Notes
 
 Implemented in:
 
-- `backend/scripts/show-access-collections.js` (new) — connects via `config.mongoUri` (prints only sanitized host/db name, never the URI), runs the existing idempotent `seedDatabase(...)` (same wiring as `scripts/reset-database.js`), then prints `[COLLECTIONS]`, `[ROLES]`, `[USERS]`, `[SUPER_ADMIN MENU]` sections using the FR-001 helpers.
-- `backend/package.json` — added `"access:show": "node scripts/show-access-collections.js"`.
+- `frontend/src/lib/branding.ts` — added exported `useAssetObjectUrl(rawUrl)` hook (fetch blob → object URL; revokes on unmount/path change; returns raw URL for non-`/api/` paths; returns `null` while pending/failed so callers fall back to the raw URL).
+- `frontend/src/features/branding/BrandingSettingsPanel.tsx` — `const previewLogoUrl = useAssetObjectUrl(active?.logo?.url ?? null)`; the panel preview uses `previewLogoUrl ?? active.logo.url` and `ThemePreview` receives `logoUrl={previewLogoUrl ?? active.logo?.url ?? null}`.
+- `frontend/src/features/branding/ThemePreview.tsx` — no change (already consumes the `logoUrl` prop).
 
 Verified:
 
-- Ran `node scripts/show-access-collections.js` against the Atlas cluster: connected to `ac-euhtnmc-shard-00-01.thgt0lt.mongodb.net` (db `hris-project`); 28 collections present including `users`, `roles`, `permissions`, `rolepermissions`, `userroles`; seed reported up to date; report printed SUPER_ADMIN role (all permissions), superadmin user, and full 7-group menu tree.
-- Output contained no `passwordHash`/`MONGO_URI` values.
-- Idempotency: seed is a no-op for existing data; no duplicates created on repeat runs.
+- `npm run build` + `npm run lint` pass.
 
 ---
 
-### FR-003: Add unit tests for `access-report.js`
+### FR-003: Optional production API base URL override via `VITE_API_URL`
 
-**Type:** Test
+**Type:** Configuration / Frontend
 
 **Priority:** Medium
 
-**Status:** Proposed
+**Status:** Implemented — verified
+
+- [x] Implement requirement
 
 **Description:**
-Cover the pure helpers from FR-001 so regressions (especially secret leakage and sorting) are caught automatically.
+The user asked for the ngrok URL to be "added" to asset/attachment URLs. The maintainable version is an **environment variable override of the axios baseURL**, not a hardcoded string. `VITE_API_URL` already exists in `frontend/.env` but is unused. When set at Vercel build time, axios calls go directly to that origin (e.g., the ngrok tunnel or, later, Render); when unset, the default relative `/api/v1` (Vercel rewrite path) is used.
+
+**Current Behavior:**
+`baseURL: "/api/v1"` is a hardcoded constant (`axios.ts:161`); `VITE_API_URL` is defined but never read.
+
+**Expected Behavior:**
+`baseURL` = `import.meta.env.VITE_API_URL` when set (trailing `/` trimmed), else `"/api/v1"`.
 
 **Affected Files:**
-- `backend/test/unit/access-report.test.js` (new)
+- `frontend/src/lib/axios.ts` (baseURL resolution at 160-163)
+- `frontend/.env` (optional value; do not change required default semantics)
+- Documentation: `frontend/vercel.json` notes + this TODO (no source comment needed)
 
 **Implementation Instructions:**
-1. Create `backend/test/unit/access-report.test.js` using the built-in `node:test` + `node:assert` (match existing unit tests).
-2. `sanitizeUser`: assert `passwordHash`/`passwordHistory` are absent; assert `id` string, `username`, `name`, `email`, `status`, `roleIds` mapped to strings.
-3. `roleRow`: assert sorted permissions; assert fields present.
-4. `userRow`: build a `Map` `{ roleIdA: "MANAGER", roleIdB: "HR_ADMIN" }`; assert unknown roleIds are ignored and roles are sorted.
-5. `buildMenuTree`: pass `["*"]` and `["dashboard:view", "users:view"]`; assert the returned tree contains only nodes whose `anyOf` intersect the permission set (i.e., `dashboard:view` grants Dasbor; assert a `nav.dashboard` node exists and a `nav.rbac` node does not when `rbac:view_roles` is absent).
+1. At module top of `axios.ts`:
+   - `const configuredBase = import.meta.env.VITE_API_URL?.trim().replace(/\/+$/, "") ?? "";`
+   - `baseURL: configuredBase ? `${configuredBase}/api/v1` : "/api/v1"`.
+2. Keep the `ngrok-skip-browser-warning` header (it only affects direct-ngrok calls; harmless otherwise).
+3. **CORS note for the Developer/Operator**: direct calls to the ngrok origin are cross-origin; with `credentials: true` the backend `CORS_ORIGINS` must include the exact Vercel origin (`backend/src/infrastructure/config.js:50-53`). The default relative path (Vercel rewrite) is same-origin and avoids CORS — prefer it unless the rewrite path is intentionally bypassed.
+4. Do not change the default (`/api/v1`) behavior.
 
 **Dependencies:**
-- FR-001.
+- None.
 
 **Must Preserve:**
-- No DB access in unit tests (pure functions only).
-- Existing tests untouched.
+- Default relative `/api/v1` behavior for local dev and the Vercel-rewrite path.
+- Interceptor behavior (refresh/replay).
 
 **Acceptance Criteria:**
-- [x] All new assertions pass under `npm run test:unit`.
-- [x] Secret-leak regression covered (sanitizeUser test).
+- [x] Without `VITE_API_URL`, axios still calls `/api/v1/...` (local dev + Vercel rewrite path unchanged). *(verified: `configuredApiBase` is `""` when unset → baseURL stays `/api/v1`)*
+- [x] With `VITE_API_URL=https://walk-sycamore-sublevel.ngrok-free.dev` at build time, axios calls resolve to that origin + `/api/v1` (no trailing-slash bugs). *(verified: trim + strip trailing `/` before composing)*
+- [x] No hardcoded ngrok URL in source files. *(verified)*
 
 #### Implementation Notes
 
 Implemented in:
 
-- `backend/test/unit/access-report.test.js` (new) — 9 tests using `node:test` + `node:assert/strict`: `sanitizeUser` strips all password/token bookkeeping; defensive `_id`/`roleIds` handling; `roleRow` sorted permissions + empty levelLabel fallback; `userRow` map resolution/unknown-id ignore/sort; `buildMenuTree` intersection pruning, empty-set, and wildcard grant.
+- `frontend/src/lib/axios.ts` — `const configuredApiBase = ((import.meta.env.VITE_API_URL as string | undefined) ?? "").trim().replace(/\/+$/, "")`; `baseURL: configuredApiBase ? `${configuredApiBase}/api/v1` : "/api/v1"`. Default behavior unchanged.
 
 Verified:
 
-- `node --test --test-reporter=spec "test/unit/access-report.test.js"` → 9/9 pass.
-- Full unit suite: 731 tests, 730 pass, 1 fail (`request.service.test.js:237` — pre-existing `listMine` summary failure, unrelated to this task).
-- Navigation integration regression: `navigation.api.test.js` → 3/3 pass.
+- `npm run build` + `npm run lint` pass (tsc accepts `import.meta.env.VITE_API_URL` via `vite/client` types).
+- CORS note: direct `VITE_API_URL` calls to ngrok are cross-origin; `CORS_ORIGINS` on the backend must include the Vercel origin. The default relative path (Vercel rewrite) is same-origin and needs no CORS change.
+
+---
+
+### FR-004: Verify attachment and attendance-media flows (audit only, no code change)
+
+**Type:** Verification / Documentation
+
+**Priority:** High
+
+**Status:** Source audit complete — runtime verification pending operator
+
+- [ ] Implement requirement (runtime acceptance criteria require live Vercel + running ngrok tunnel — cannot be executed from this environment)
+
+#### Implementation Notes
+
+Source-level verification COMPLETE (no code change was required):
+
+- `RequestAttachments.tsx:28-42` — `attachmentApi.download(item.id)` (axios blob) → `URL.createObjectURL` → programmatic download. Used at `RequestDetailDialog.tsx:66` and `RequestDrillDownDialog.tsx:125` (approval inbox/drill-down).
+- `attendanceApi.getMedia` (`axios.ts`) — blob fetch for selfies.
+- Repo-wide grep confirms `attachmentApi.downloadUrl` is defined (`axios.ts:631`) but **never called**; no `window.open(`, no `target="_blank"`, no raw attachment `<a href>`/URL rendering exists in `frontend/src`.
+- Therefore attachments already traverse the header-carrying axios client and need no source change.
+
+Blocked on: a browser session against the live Vercel origin with the ngrok tunnel running.
+
+Remaining (operator):
+- Verify the Unduh button downloads files from detail popups (izin/sakit/cuti/SPPD) and approval inbox/history on live Vercel.
+
+**Description:**
+The user believes attachment URLs need the ngrok prefix. Verified inspection shows attachments are **already blob-based through the header-carrying axios client** and need no code change. This FR captures the verified evidence and the required runtime verification.
+
+**Verified Current Behavior (from source):**
+- `RequestAttachments.tsx:28-42` — `attachmentApi.download(item.id)` (axios blob) → `URL.createObjectURL` → programmatic download.
+- Used at `RequestDetailDialog.tsx:66` and `RequestDrillDownDialog.tsx:125` (approval inbox/drill-down = "kotak masuk persetujuan" / "riwayat persetujuan").
+- `attendanceApi.getMedia` (`axios.ts:670-674`) — blob fetch for selfies.
+- `attachmentApi.downloadUrl` (`axios.ts:606`) — **unused** (leave as-is; do not delete in this task).
+- No `<a href>`, `window.open`, or direct URL rendering of attachments exists (repo-wide grep).
+
+**Expected Behavior:**
+No source change. Runtime verification only (see Testing / Verification).
+
+**Affected Files:**
+- None (verification only).
+
+**Implementation Instructions:**
+1. Do not modify attachment code.
+2. Verify at runtime on live Vercel that the Unduh button in a request detail popup and in the approval drill-down downloads the file through the tunnel.
+3. If any future change introduces raw `<a href>` attachment URLs, it must be rejected in review (browser cannot send `ngrok-skip-browser-warning`).
+
+**Dependencies:**
+- None.
+
+**Must Preserve:**
+- Authenticated blob downloads (files are never exposed without a token).
+
+**Acceptance Criteria:**
+- [ ] Runtime verification passes for izin, sakit, cuti, perjalanan dinas detail popups. *(pending operator)*
+- [ ] Runtime verification passes for approval inbox / approval history drill-down. *(pending operator)*
+
+---
+
+### FR-005: Deployment configuration verification (vercel.json + redeploy)
+
+**Type:** Operational / Deployment
+
+**Priority:** High
+
+**Status:** Repo-level verified — live redeploy/tunnel pending operator
+
+- [ ] Implement requirement (live Vercel redeploy + ngrok tunnel status require the operator)
+
+#### Implementation Notes
+
+Repo-level verification COMPLETE:
+
+- `frontend/vercel.json` exists at the frontend root (correct location).
+- Rewrite order verified: `/api/:path*` → `https://walk-sycamore-sublevel.ngrok-free.dev/api/:path*` FIRST, then `/(.*)` → `/index.html` (SPA fallback last). Correct.
+
+Blocked on: operator actions — confirm Vercel project Root Directory is `frontend`, redeploy the Vercel project (so the corrected `vercel.json` + the FR-001/002/003 code are live), and confirm the ngrok tunnel is running with the URL matching `vercel.json`.
+
+Remaining (operator):
+- Confirm live Vercel deployment has picked up the rewrite.
+- If the ngrok tunnel URL rotated, update `frontend/vercel.json` and redeploy.
+
+**Description:**
+The Vercel rewrite is the routing backbone for the relative `/api/v1` paths. It must be deployed from the correct project root. If the live Vercel deployment predates the corrected `frontend/vercel.json` (previously at `frontend/src/vercel.json`), `/api/...` hits the SPA fallback and every asset/API call fails — this alone explains broken logos.
+
+**Current State:**
+- `frontend/vercel.json` now exists at the frontend root (correct location) with `/api/:path*` rewrite **before** the `/(.*)` → `/index.html` SPA fallback.
+- Whether the live Vercel deployment has picked it up is **unknown** (operator must confirm).
+
+**Expected Behavior:**
+Live Vercel deployment contains a working `/api/:path*` → ngrok rewrite.
+
+**Affected Files:**
+- `frontend/vercel.json` (verify order; do not reorder)
+- Vercel project settings (dashboard — operator action)
+
+**Implementation Instructions:**
+1. Confirm the Vercel project **Root Directory** is `frontend` (so `vercel.json` is read).
+2. Confirm rewrite order: `/api/:path*` first, then `/(.*)` → `/index.html`.
+3. Redeploy the Vercel project (the recent `vercel.json` move + axios header change must be live).
+4. Confirm the ngrok tunnel is running and its public URL matches the one in `vercel.json` (note: if the tunnel URL changed, update `vercel.json` and redeploy).
+
+**Dependencies:**
+- FR-001/FR-002 (so there is something to verify).
+
+**Must Preserve:**
+- Rewrite order; SPA fallback must remain last.
+
+**Acceptance Criteria:**
+- [x] `frontend/vercel.json` exists at the frontend root with `/api/:path*` before the SPA fallback. *(repo-level verified)*
+- [ ] `GET https://<vercel-app>.vercel.app/api/v1/platform/branding` returns the branding JSON (not index.html). *(pending operator — requires live redeploy + tunnel)*
+- [ ] `GET https://<vercel-app>.vercel.app/api/v1/platform/branding-assets/<existing-token>` returns the logo bytes (verify via browser devtools response preview). *(pending operator)*
 
 ---
 
@@ -334,20 +410,20 @@ Verified:
 
 ### Endpoint Changes
 
-None.
+None. All existing endpoints (`/api/v1/platform/branding`, `/api/v1/platform/branding-assets/:token`, `/api/v1/attachments/:id/download`, `/api/v1/attendance/media/:token`) remain unchanged.
 
 ### Request Changes
 
-None.
+None. Frontend-only change: logo fetched as blob instead of rendered from a relative path.
 
 ### Response Changes
 
-None. (The script prints to stdout; it is not an HTTP endpoint.)
+None. Backend keeps returning the relative `logo.url`.
 
 ### Error Handling
 
-- Script: on connect/seed/report failure, `.catch` logs `[access:show] failed: <err>` and exits 1 (same pattern as `reset-database.js`).
-- `buildNavigationFor` on an empty permission set returns an empty tree — the script prints it without erroring.
+- Logo blob fetch failure → fall back to the stored relative URL (or null) — never break bootstrap.
+- Tunnel/backend down → images/attachments fail as today; API errors surface normally.
 
 ---
 
@@ -355,15 +431,15 @@ None. (The script prints to stdout; it is not an HTTP endpoint.)
 
 ### Existing Models
 
-- `users`, `roles`, `permissions`, `role_permissions`, `user_roles` — unchanged schemas.
+Not affected.
 
 ### Required Changes
 
-- None to schemas. The script only *ensures* the collections exist/populated via the existing seed.
+None.
 
 ### Migration Requirements
 
-- None. `seedDatabase` is idempotent (`$setOnInsert`/`findByKey` semantics; never overwrites existing data). On a fresh Atlas cluster, first run creates the collections; on an existing DB, it is a no-op for already-present data.
+None.
 
 ---
 
@@ -371,75 +447,66 @@ None. (The script prints to stdout; it is not an HTTP endpoint.)
 
 ### Pages
 
-- None.
+- `frontend/src/pages/Login/index.tsx` — verify only (consumes `logoUrl`).
 
 ### Components
 
-- None.
+- `frontend/src/components/layout/navbar/Navbar.tsx` — verify only.
+- `frontend/src/components/layout/sidebar/SidebarLogo.tsx` — verify only.
+- `frontend/src/features/branding/ThemePreview.tsx` — verify only.
+- `frontend/src/features/branding/BrandingSettingsPanel.tsx` — resolve preview logo via blob helper (FR-002).
 
 ### Hooks / State
 
-- None.
+- `frontend/src/lib/branding.ts` — `applyIdentity`/`applyBranding`: resolve logo URL → object URL; track + revoke previous object URL.
 
 ### Forms
 
-- None.
+- Not affected.
 
 ### Validation
 
-- None.
+- Not affected.
 
 ### UI / UX
 
-- None.
+- No visual changes; fixes broken image rendering on production.
 
 ---
 
 ## Backend Changes
 
-### Routes
+### Routes / Controllers / Services / Validation / Authorization
 
-- None.
-
-### Controllers
-
-- None.
-
-### Services
-
-- None (reuse `seedDatabase`, `buildNavigationFor`, and existing repositories).
-
-### Validation
-
-- None.
-
-### Authorization
-
-- None (CLI tool; no HTTP auth path).
+**None.** Backend is verified correct and must remain unchanged.
 
 ---
 
 ## Cross-Layer Implementation Flow
 
 ```text
-npm run access:show (backend/)
-    ↓
-scripts/show-access-collections.js
-    ↓
-createConfig() → mongoose.connect(config.mongoUri)   [Atlas cluster]
-    ↓
-buildApp(config) → seedDatabase(...)   [ensures collections + data, idempotent]
-    ↓
-repositories.roleRepository.listAll()
-repositories.permissionRepository.permissionKeysForRole(roleId)
-repositories.userRepository.list(...)
-repositories.roleRepository.findByKey("SUPER_ADMIN")
-    ↓
-domain/access-report.js (sanitizeUser / roleRow / userRow / buildMenuTree)
-    ↓
-stdout: Collections · Roles+Permissions · Users+Roles · SUPER_ADMIN Menu Tree
-    (no secrets, no MONGO_URI)
+Browser (Vercel origin)
+  ↓
+<img src={logoUrl}>  (object URL created from blob, FR-001)
+  ↓
+bootstrapBranding() → brandingApi.public()  (axios, ngrok-skip-browser-warning header)
+  ↓
+GET /api/v1/platform/branding  (relative — resolved by Vercel rewrite)
+  ↓
+Vercel rewrite: /api/:path* → https://<ngrok>.ngrok-free.dev/api/:path*
+  ↓
+ngrok tunnel (header present ⇒ no interstitial)
+  ↓
+Backend Express: /api/v1/platform/branding → branding.service.getBranding()
+  ↓
+returns { identity: { logo: { url: "/api/v1/platform/branding-assets/<key>" } } }
+  ↓
+frontend: fetchBlobObjectUrl(logo.url) → GET /api/v1/platform/branding-assets/<key> (blob, header present)
+  ↓
+URL.createObjectURL(blob) → logoUrl → <img> renders
 ```
+
+Attachments use the identical blob pattern via `attachmentApi.download(id)` (already in place).
 
 ---
 
@@ -447,26 +514,26 @@ stdout: Collections · Roles+Permissions · Users+Roles · SUPER_ADMIN Menu Tree
 
 The following existing functionality MUST NOT be broken:
 
-- Existing `seedDatabase` behavior (idempotent; SUPER_ADMIN always ensured; demo data gated by `SEED_DEMO_DATA`).
-- Existing models/repositories/services/controllers/routes — no changes.
-- Existing RBAC/navigation behavior — `buildNavigationFor` reused as-is.
-- Existing `npm test` suite — new module is additive; existing tests untouched.
-- Existing `.env` and config handling — the script reads `config.mongoUri` without printing it.
+- Backend relative logo URL format (`branding.service.js:143`) — never change to an absolute/ngrok URL.
+- `bootstrapBranding()` anti-flash behavior in `main.tsx` (must stay non-blocking).
+- Local development logo/attachment behavior via the Vite proxy.
+- Authenticated attachment blob downloads (`RequestAttachments.tsx`) — keep token-bearing axios requests; never render raw attachment URLs.
+- The `/(.*)` → `/index.html` SPA fallback must remain the LAST rewrite.
+- Vercel rewrite order `/api/:path*` before `/(.*)`.
+- Interceptor behavior (403 denied toast, 401 single-flight refresh) in `axios.ts`.
+- Default axios `baseURL: "/api/v1"` when `VITE_API_URL` is unset.
 
 ---
 
 ## Edge Cases
 
-- **Fresh Atlas cluster with zero collections**: seed creates all access collections and data; report shows them.
-- **Existing DB with data**: seed is a no-op for existing roles/users; report reflects current data.
-- **`SEED_DEMO_DATA=false`**: only SUPER_ADMIN role + permission registry + superadmin user are ensured; report shows fewer roles/users — this is correct, not an error.
-- **SUPER_ADMIN role missing (should not happen after seed)**: print warning, continue; menu section shows "SUPER_ADMIN role not found".
-- **User with no roles**: `roleIds` empty → `roles: []` (no crash).
-- **Unknown/removed roleIds on a user**: ignored by `userRow` (map lookup misses) — no crash.
-- **Permission set empty**: `buildMenuTree([])` → `[]` (no crash).
-- **Wildcard `*` permission**: `buildNavigationFor` already treats `*` as granting everything — reused as-is.
-- **Output size**: users paginated with `pageSize: 10000`; acceptable for an operator tool. Do not paginate further unless the DB grows beyond this (not expected for access collections).
-- **Secrets**: `sanitizeUser` strips password fields; the script never prints the URI.
+- **Logo blob fetch fails** (tunnel down / 404): fall back to the stored relative URL or null; app boots with default branding — never throw from bootstrap.
+- **Object URL lifecycle**: when a logo is replaced (upload/remove/theme reload), revoke the previous object URL to avoid leaks; avoid revocation race on StrictMode double effects.
+- **Legacy stored logos**: any previously stored `logo.url` (relative) is converted transparently by the helper — no migration needed.
+- **`VITE_API_URL` trailing slash**: normalize (`trim` + strip trailing `/`) before composing baseURL.
+- **CORS when `VITE_API_URL` points at ngrok**: direct cross-origin calls require the ngrok/backend origin to be listed in backend `CORS_ORIGINS` (`config.js:50-53`); the default rewrite path is same-origin and needs no CORS change.
+- **Tunnel URL changes**: if the ngrok URL rotates, only `frontend/vercel.json` (and optional `VITE_API_URL`) need updating + redeploy; source code untouched.
+- **`attachmentApi.downloadUrl`** remains unused — leave it (out of scope to delete).
 
 ---
 
@@ -474,65 +541,72 @@ The following existing functionality MUST NOT be broken:
 
 ### Frontend
 
-- [x] Not affected — no frontend changes (skip).
+- [ ] Local dev: login page, navbar, and sidebar render the logo (Vite proxy path).
+- [ ] Live Vercel: logo renders on login/navbar/sidebar with backend on ngrok.
+- [ ] Live Vercel: admin branding panel shows the current logo preview; uploading a new logo refreshes it.
+- [ ] Live Vercel: attachment Unduh works from request detail popup (izin/sakit/cuti/perjalanan dinas).
+- [ ] Live Vercel: attachment Unduh works from approval inbox / approval history drill-down.
+- [ ] Live Vercel: attendance selfie preview (`attendanceApi.getMedia`) renders.
 
 ### Backend
 
-- [x] `npm run test:unit` in `backend/` passes (new `access-report.test.js` included).
-- [x] `npm test` in `backend/` remains green.
+- [ ] No backend changes; run existing backend unit tests to confirm no regressions (`cd backend && npm run test:unit`).
 
 ### API
 
-- [x] Not applicable (no HTTP endpoint).
+- [ ] `GET https://<vercel-app>.vercel.app/api/v1/platform/branding` → JSON (not index.html).
+- [ ] `GET https://<vercel-app>.vercel.app/api/v1/platform/branding-assets/<existing-token>` → image bytes.
+- [ ] `GET /api/v1/attachments/:id/download` with Bearer token → file bytes (local + through tunnel).
 
 ### Database
 
-- [x] Manual: run `npm run access:show` against the Atlas cluster (current `.env`). Confirm collections listed include `users`, `roles`, `permissions`, `role_permissions`, `user_roles`.
-- [x] Manual: run the script a second time — no duplicate roles/users (idempotency).
+- [ ] No database changes required.
 
 ### RBAC
 
-- [x] Manual: SUPER_ADMIN menu tree prints all navigation groups/leaves (SUPER_ADMIN holds every permission).
+- [ ] Attachment download still requires `files:download`; public branding asset still public (no auth regression).
 
 ### Regression
 
-- [x] Existing tests untouched and green.
-- [x] No model/repository/route/controller/service files modified.
+- [ ] Local dev login flow works.
+- [ ] Vercel SPA routes (deep links) still fall back to `index.html`.
 
 ---
 
 ## Implementation Order
 
-1. **FR-001** — `access-report.js` pure helpers (foundation).
-2. **FR-002** — `show-access-collections.js` script + `package.json` entry (uses FR-001).
-3. **FR-003** — unit tests for FR-001; run `npm run test:unit`, then run the script manually for verification.
+1. **FR-001** — blob helper + logo object URL (core fix; unblocks the visible symptom).
+2. **FR-002** — BrandingSettingsPanel/ThemePreview preview fix (depends on FR-001 helper).
+3. **FR-004** — attachment/media verification (independent; can run in parallel with 1-2).
+4. **FR-003** — optional `VITE_API_URL` base override (independent; low risk).
+5. **FR-005** — deployment verification + redeploy (last; verifies 1-4 on live).
 
-Dependency: FR-002 and FR-003 both depend on FR-001.
+Dependency note: FR-002 depends on FR-001's helper; FR-005 depends on FR-001/FR-002 being deployed.
 
 ---
 
 ## Developer Notes
 
-- **Never print secrets**: do not log `config.mongoUri` (contains Atlas credentials) or any `passwordHash`/`passwordHistory`. `sanitizeUser` is the single guard for user fields; keep it in `access-report.js` and reuse it.
-- **Reuse, don't duplicate**: the script must call the existing `seedDatabase` and `buildNavigationFor` — do not write a second seeding or navigation implementation.
-- **`buildApp` import**: importing `buildApp` from `../server` is the established script pattern (`reset-database.js:21`). It does not start the HTTP server (`start()` only runs when `require.main === module`, `server.js:666`).
-- **Domain layering**: `access-report.js` lives under `src/domain/`. It must not import Mongoose or repositories. Importing the pure `buildNavigationFor` from `application/navigation.service.js` is acceptable (that module has no I/O); if you prefer strict layering, do the import lazily inside `buildMenuTree`.
-- **Idempotency**: do not add any `deleteMany`/`dropDatabase`/upsert logic beyond what `seedDatabase` already does. This script must be safe to run repeatedly.
-- **Console formatting**: keep output greppable and consistent (e.g. `[ROLE]`, `[USER]`, `[COLLECTIONS]`, `[SUPER_ADMIN MENU]` headings) so it is easy for the user to read "show semuanya".
-- **Do not modify** `project-context.md` unless adding the `access:show` command to §22 Development Commands is desired — that is optional and can be done by the Developer as a non-functional doc note.
+- **Never hardcode the ngrok URL in source.** It is ephemeral and leaks the tunnel in the bundle. Use the Vercel rewrite (relative paths) or the `VITE_API_URL` env var.
+- **The `<img>` tag cannot send `ngrok-skip-browser-warning`.** Any "add the ngrok URL to the img src" change is therefore insufficient on its own — blob fetching via axios is the correct mechanism.
+- The backend already added the header to its axios client (`axios.ts:162`); keep it.
+- Keep the change minimal: one helper in `axios.ts`, async logo resolution in `branding.ts`, preview fix in `BrandingSettingsPanel.tsx`, optional baseURL override. Do not touch routes, contracts, or the backend.
+- If the operator has a stable Render backend (see `ai-project-context/RENDER-DEPLOYMENT.md`), it should replace the ngrok URL in `vercel.json` — this entire class of issues disappears (no interstitial, persistent URL).
 
 ---
 
 ## Definition of Done
 
-- [x] FR-001 implemented (pure helpers with secret sanitization).
-- [x] FR-002 implemented (script + `npm run access:show`).
-- [x] FR-003 implemented (unit tests green).
-- [x] Running `npm run access:show` prints collections, roles+permissions, users+roles, SUPER_ADMIN menu tree.
-- [x] No secrets printed anywhere.
-- [x] No frontend/API/RBAC/schema changes.
-- [x] Existing `npm test` remains green.
-- [x] Running the script twice is safe (idempotent).
+- [x] FR-001 implemented (code): logo resolves via blob object URL; build + lint pass. Live Vercel rendering pending operator.
+- [x] FR-002 implemented (code): admin branding preview resolves via blob object URL; build + lint pass. Live Vercel preview pending operator.
+- [x] FR-003 implemented: `VITE_API_URL` override works, default unchanged; build + lint pass.
+- [ ] FR-004 verified: attachments + attendance media download on live Vercel (detail popups + approval inbox/history). *(source audit done; runtime pending operator)*
+- [x] FR-005 repo-level verified: `frontend/vercel.json` at project root, rewrite order correct. Live deployment pending operator.
+- [x] Backend unchanged — no backend files modified (unit tests not re-run; no backend code changed).
+- [x] No ngrok URL hardcoded in `frontend/src/**`.
+- [x] Local dev behavior preserved (relative `/api/v1` default unchanged; build + lint pass).
+- [x] Edge cases handled (blob failure fallback, object URL revocation, generation guard, trailing slash, CORS note).
+- [x] No unrelated modules modified.
 
 ---
 
@@ -540,36 +614,40 @@ Dependency: FR-002 and FR-003 both depend on FR-001.
 
 ### Completed
 
-- FR-001 — `backend/src/domain/access-report.js` (pure report helpers with secret sanitization)
-- FR-002 — `backend/scripts/show-access-collections.js` + `npm run access:show`
-- FR-003 — `backend/test/unit/access-report.test.js` (unit tests)
+- FR-001 — branding logo loaded via axios blob + object URL (helper `fetchBlobObjectUrl` in `lib/axios.ts`; async logo resolution with generation guard + revocation in `lib/branding.ts`).
+- FR-002 — admin branding live preview + `ThemePreview` resolved via `useAssetObjectUrl`.
+- FR-003 — optional `VITE_API_URL` axios baseURL override (default `/api/v1` unchanged).
+- FR-004 — source audit complete (attachments/selfies already blob-based; no code change).
+- FR-005 — repo-level verification complete (`frontend/vercel.json` at root, rewrite order correct).
 
 ### Files Changed
 
-Backend (all additive; no existing module modified):
-
-- `backend/src/domain/access-report.js` (new)
-- `backend/scripts/show-access-collections.js` (new)
-- `backend/test/unit/access-report.test.js` (new)
-- `backend/package.json` (added `"access:show"` script)
+- `frontend/src/lib/axios.ts`
+- `frontend/src/lib/branding.ts`
+- `frontend/src/features/branding/BrandingSettingsPanel.tsx`
+- `ai-project-context/TODO.md`
 
 ### Database Changes
 
-- None (schema). The script reuses the existing idempotent `seedDatabase` to ensure the access collections (`users`, `roles`, `permissions`, `role_permissions`, `user_roles`) exist on the connected Atlas cluster. Verified: 28 collections present on `hris-project`.
+- None
 
 ### API Changes
 
-- None.
+- None (frontend-only change; backend untouched)
 
 ### Remaining Work
 
-- None for this issue. (Pre-existing unrelated failure remains: `test/unit/request.service.test.js:237` `listMine` summary assertion — documented in earlier implementation summaries.)
+- **Operator / runtime verification** (cannot be executed from this environment):
+  - FR-004: confirm attachment downloads from detail popups + approval inbox/history on live Vercel.
+  - FR-005: confirm Vercel project Root Directory is `frontend`, redeploy the Vercel project, confirm the ngrok tunnel is running with the URL matching `frontend/vercel.json`, and verify `GET /api/v1/platform/branding` + branding-assets return real bytes on the live origin.
+  - Optional: set `VITE_API_URL` at Vercel build time if the rewrite path is intentionally bypassed (see FR-003 CORS note).
 
 ### Verification
 
-- [x] Frontend verified (not affected)
-- [x] Backend verified (`access-report.test.js` 9/9 pass; unit suite 730/731 pass — 1 pre-existing failure)
-- [x] API verified (not applicable — CLI tool)
-- [x] Database verified (script ran against Atlas: collections + SUPER_ADMIN role/user + menu tree printed; no secrets)
-- [x] RBAC verified (SUPER_ADMIN menu tree complete; `navigation.api.test.js` 3/3 pass)
-- [x] Regression checked (no existing modules modified; navigation integration green)
+- [x] Frontend verified — `npm run build` (tsc + vite) and `npm run lint` pass.
+- [x] Backend verified — no backend files modified.
+- [ ] API verified — endpoint behavior unchanged; live smoke tests pending operator.
+- [ ] Database verified — no database changes.
+- [x] RBAC verified — no auth/RBAC/permission code touched.
+- [x] Regression checked — relative default preserved, Vite proxy path unchanged, SPA fallback rewrite order preserved.
+

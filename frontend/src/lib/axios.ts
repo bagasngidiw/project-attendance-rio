@@ -156,11 +156,36 @@ export interface UserListResult {
   pageSize: number;
 }
 
+/**
+ * Optional production API base override. When VITE_API_URL is set at build
+ * time (e.g. https://walk-sycamore-sublevel.ngrok-free.dev or a Render URL),
+ * every API call targets that origin + "/api/v1". When unset the default
+ * relative "/api/v1" is used, which relies on the Vercel rewrite / Vite dev
+ * proxy. The ngrok URL is NEVER hardcoded in source — only via this env var.
+ */
+const configuredApiBase = (
+  (import.meta.env.VITE_API_URL as string | undefined) ?? ""
+)
+  .trim()
+  .replace(/\/+$/, "");
+
 /** API client with automatic access-token attachment and refresh-on-401. */
 export const api: AxiosInstance = axios.create({
-  baseURL: "/api/v1",
+  baseURL: configuredApiBase ? `${configuredApiBase}/api/v1` : "/api/v1",
   headers: { "Content-Type": "application/json", "ngrok-skip-browser-warning": "true", },
 });
+
+/**
+ * Fetches a relative /api asset path through the shared axios instance (which
+ * carries the ngrok-skip-browser-warning header) and returns an object URL for
+ * inline <img>/<a> rendering. Raw browser <img src> requests cannot send that
+ * header, which is why assets proxied to ngrok must be loaded as blobs.
+ * Callers MUST revoke the returned object URL when it is replaced or unmounted.
+ */
+export async function fetchBlobObjectUrl(relativePath: string): Promise<string> {
+  const res = await api.get(relativePath, { responseType: "blob" });
+  return URL.createObjectURL(res.data as Blob);
+}
 
 /** In-memory access token (never persisted). */
 let accessToken: string | null = null;

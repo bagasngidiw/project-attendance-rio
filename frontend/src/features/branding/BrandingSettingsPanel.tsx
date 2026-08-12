@@ -11,7 +11,7 @@ import { useQuery } from "@tanstack/react-query";
 import type { BrandingDto, BrandingLogo } from "@contracts/platform";
 
 import { brandingApi } from "@/lib/axios";
-import { applyBranding } from "@/lib/branding";
+import { applyBranding, useAssetObjectUrl } from "@/lib/branding";
 import { apiErrorMessage } from "@/lib/apiError";
 import { toast } from "@/lib/toast";
 import { Button } from "@/components/ui/Button";
@@ -50,6 +50,10 @@ export function BrandingSettingsPanel() {
     if (!saved) return null;
     return toDraft(saved);
   }, [draft, saved]);
+
+  // Live logo preview resolved as a blob object URL through the axios client
+  // (raw <img> requests cannot carry the ngrok-skip-browser-warning header).
+  const previewLogoUrl = useAssetObjectUrl(active?.logo?.url ?? null);
 
   const dirty = useMemo(() => {
     if (!saved || !active) return false;
@@ -164,7 +168,7 @@ export function BrandingSettingsPanel() {
           <div className="flex h-20 w-20 items-center justify-center overflow-hidden rounded-xl border border-[var(--brand-border)] bg-[var(--brand-background)]">
             {active.logo?.url ? (
               <img
-                src={active.logo.url}
+                src={previewLogoUrl ?? active.logo.url}
                 alt="Logo aplikasi"
                 className="max-h-16 max-w-full object-contain"
               />
@@ -227,7 +231,7 @@ export function BrandingSettingsPanel() {
       <ThemePreview
         applicationName={active.applicationName}
         applicationShortName={active.applicationShortName}
-        logoUrl={active.logo?.url ?? null}
+        logoUrl={previewLogoUrl ?? active.logo?.url ?? null}
       />
     </section>
   );

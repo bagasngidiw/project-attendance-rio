@@ -8,11 +8,11 @@
  * injected.
  */
 
-import { useSyncExternalStore } from "react";
+import { useEffect, useState, useSyncExternalStore } from "react";
 
 import type { BrandingDto, BrandingTokenKey, BrandingTokens } from "@contracts/platform";
 
-import { brandingApi } from "@/lib/axios";
+import { brandingApi, fetchBlobObjectUrl } from "@/lib/axios";
 
 /** The token keys the client applies to the document (fixed product palette). */
 export const TOKEN_KEYS: BrandingTokenKey[] = [
@@ -70,6 +70,50 @@ const DEFAULT_STATE: BrandingState = {
 let state: BrandingState = DEFAULT_STATE;
 const listeners = new Set<() => void>();
 
+/**
+ * Object URL currently applied as the logo (created from a blob fetched via
+ * the header-carrying axios client). Revoked when replaced or removed so the
+ * branding store never leaks blob URLs.
+ */
+let currentLogoObjectUrl: string | null = null;
+
+/**
+ * Monotonic generation for the async logo resolution. Bumped on every
+ * applyIdentity call so a slow blob fetch for an outdated logo can never
+ * overwrite a newer one.
+ */
+let identityGeneration = 0;
+
+function revokeLogoObjectUrl(): void {
+  if (currentLogoObjectUrl) {
+    URL.revokeObjectURL(currentLogoObjectUrl);
+    currentLogoObjectUrl = null;
+  }
+}
+
+/**
+ * Upgrades a relative /api logo URL to a blob object URL fetched through the
+ * shared axios instance (which carries the ngrok-skip-browser-warning header).
+ * Falls back to the raw relative URL on failure so bootstrap never breaks.
+ */
+async function resolveLogoObjectUrl(rawUrl: string, generation: number): Promise<void> {
+  try {
+    const objectUrl = await fetchBlobObjectUrl(rawUrl);
+    if (generation !== identityGeneration) {
+      // A newer identity replaced this one while the fetch was in flight.
+      URL.revokeObjectURL(objectUrl);
+      return;
+    }
+    revokeLogoObjectUrl();
+    currentLogoObjectUrl = objectUrl;
+    state = { ...state, logoUrl: objectUrl };
+    notify();
+  } catch {
+    // Keep the raw relative URL (pre-upgrade behavior) when the asset cannot
+    // be fetched — never break the branding bootstrap.
+  }
+}
+
 function notify(): void {
   listeners.forEach((listener) => listener());
 }
@@ -114,13 +158,26 @@ export function applyIdentity(identity: {
 
   document.title = applicationName;
 
+  const rawLogoUrl = identity.logo?.url ?? null;
+
   state = {
     ...state,
     applicationName,
     applicationShortName,
-    logoUrl: identity.logo?.url ?? null,
+    logoUrl: rawLogoUrl,
   };
   notify();
+
+  // Upgrade a relative /api logo URL to a blob object URL fetched through the
+  // axios client. This is what makes the logo render on Vercel when the
+  // backend is behind ngrok: raw browser <img> requests cannot send the
+  // ngrok-skip-browser-warning header, but axios requests can.
+  identityGeneration += 1;
+  if (!rawLogoUrl || !rawLogoUrl.startsWith("/api/")) {
+    revokeLogoObjectUrl();
+    return;
+  }
+  void resolveLogoObjectUrl(rawLogoUrl, identityGeneration);
 }
 
 /** Applies a full branding payload (tokens + identity). */
@@ -149,4 +206,50 @@ export function bootstrapBranding(): void {
 /** Reactive branding state — components re-render when the async theme loads. */
 export function useBranding(): BrandingState {
   return useSyncExternalStore(subscribe, getSnapshot, getSnapshot);
+}
+
+/**
+ * Resolves a relative /api asset URL (e.g. a staged logo preview) to a blob
+ * object URL fetched through the header-carrying axios client. Returns the raw
+ * URL unchanged when it is not a relative /api path. When the fetch is pending
+ * or fails, null is returned so callers can fall back to the raw URL. The
+ * object URL is revoked automatically on unmount / path change.
+ */
+export function useAssetObjectUrl(rawUrl: string | null | undefined): string | null {
+  const url = rawUrl ?? null;
+  const isApiPath = !!url && url.startsWith("/api/");
+
+  // Store the object URL together with the source path it was created from so
+  // a stale blob from a previous logo can never be rendered for a new one.
+  const [resolved, setResolved] = useState<{ url: string; objectUrl: string } | null>(null);
+
+  useEffect(() => {
+    if (!isApiPath || !url) return;
+
+    let active = true;
+    let created: string | null = null;
+
+    fetchBlobObjectUrl(url)
+      .then((obj) => {
+        if (!active) {
+          URL.revokeObjectURL(obj);
+          return;
+        }
+        created = obj;
+        setResolved({ url, objectUrl: obj });
+      })
+      .catch(() => {
+        if (active) setResolved(null); // fall back to the raw relative URL
+      });
+
+    return () => {
+      active = false;
+      if (created) URL.revokeObjectURL(created);
+    };
+  }, [isApiPath, url]);
+
+  // Non-relative paths are rendered as-is; relative /api paths render the
+  // fetched object URL only while it matches the current source path.
+  if (!isApiPath) return url;
+  return resolved && resolved.url === url ? resolved.objectUrl : null;
 }

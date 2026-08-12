@@ -104,7 +104,7 @@ If the current implementation differs from the project context:
 
 **Trust the actual source code.**
 
-Document the discrepancy.
+Document the discrepancy.   
 
 Do not blindly follow outdated context.
 
@@ -112,8 +112,12 @@ Do not blindly follow outdated context.
 
 # USER REQUEST FORMAT
 
-akses env, config, tidak apa apa, aku ingin kamu create collection untuk mongodb, karena sekarang sudah ke mongodb cluster
-coba buat data collection yang berhubungan dengan accessing websitenya, seperti role, user, akses menu untuk superadmin, jadi show semuanya, berikan aku PASSWORD dan usernamenya yaa jangan lupa 
+jadi sekarang, website frontend ku sudah up ke prod (pakai vercel) dan be nya adalah ngrok (aku tidak bisa menemukan backend deploy yg gratis, jadi kita pakai ngrok aja) yang di konekin pakai vercel, sekarang problem nya adalah attachment, tadi aku coba ganti logo aplikasi dan img src nya me-return /api/v1/platform/branding-assets/logo-1786550527489-a7ec9d2aa7fc.png
+
+kayanya itu masih salah, apakah seharusnya ditambahkan url ngrok seperti ini  https://walk-sycamore-sublevel.ngrok-free.dev/api/v1/platform/branding-assets/logo-1786550527489-a7ec9d2aa7fc.png ? atau tidak, coba perbaiki agar terbaca di live vercel
+
+
+dan untuk fitur attachment karyawan yg lain seperti izin, sakit, cuti, perjalanan dinas, coba scan code nya di mana yang me-return sebuah attachment ( kalau seingatku, pada detail popup untuk menu tadi ada url yg harus ditambahkan https://walk-sycamore-sublevel.ngrok-free.dev agar gambar/file nya dapat terdeteksi) dan pada menu persetujuan/kotak masuk persetujuan, riwayat persetujuan sepertinya juga ada, coba pahami posisiku sekarang ya, dan tambahkan https://walk-sycamore-sublevel.ngrok-free.dev untuk setiap file attachments, karena aku ingin mempresentasikannya besok
 
 # ISSUE UNDERSTANDING
 
