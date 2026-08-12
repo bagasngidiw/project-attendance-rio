@@ -1,0 +1,173 @@
+================================================================================
+HRIS PLATFORM — NOTIFICATIONS FLOW GUIDE (FR-014 / FR-015)
+================================================================================
+
+This guide explains how in-app notifications work in this project: the
+architecture, the trigger catalog, the delivery pipeline, the API, and how to
+see the feature working with the seeded demo accounts.
+
+--------------------------------------------------------------------------------
+1. THE BIG PICTURE
+--------------------------------------------------------------------------------
+
+Notifications are generated DECLARATIVELY from workflow events. When a domain
+action happens (a request is submitted, decided, cancelled, or a password is
+reset), the backend publishes an event on an in-process EventBus. The
+NotificationService subscribes to those events, resolves the recipients, and
+creates notification records for each of them.
+
+There is no hard-coded "send notification here" call scattered through the
+business logic — everything flows through the trigger catalog.
+
+    Request submitted ──► EventBus.publish("request.submitted")
+                               │
+                               ▼
+                    NotificationService.onEvent()
+                               │  (trigger catalog resolves type + recipients)
+                               ▼
+                    NotificationRepository.create({ userId, type, title, ... })
+                               │
+                               ▼
+                    In-app inbox + navbar bell (unread count)
+
+--------------------------------------------------------------------------------
+2. KEY FILES
+--------------------------------------------------------------------------------
+
+  Backend
+  - src/domain/notification.js        Trigger catalog + recipient rules + preferences
+  - src/application/notification.service.js   Recipient resolution + delivery + inbox API
+  - src/infrastructure/event-bus.js  In-process event dispatcher
+  - src/infrastructure/models/notification.model.js   Mongo "notifications" collection
+  - src/infrastructure/repositories/notification.repository.js   Persistence
+  - src/presentation/controllers/notification.controller.js     HTTP surface
+  - src/presentation/routes/notification.routes.js              Routes
+
+  Frontend
+  - src/components/layout/notifications/NotificationBell.tsx    Navbar bell (unread badge)
+  - src/pages/Notifications/index.tsx                           Inbox page
+  - src/lib/axios.ts (notificationApi)                          API client
+
+--------------------------------------------------------------------------------
+3. THE TRIGGER CATALOG (src/domain/notification.js)
+--------------------------------------------------------------------------------
+
+Every event maps to a notification TYPE, a TITLE, and recipient rules.
+
+  Event                Notification type   Recipients
+  -------------------  ------------------  ----------------------------------------
+  request.submitted    request.assigned    APPROVER + MANAGER_OF_REQUESTER
+  request.decided      request.decided     REQUESTER
+  request.cancelled    request.cancelled   APPROVER
+  auth.password_reset  auth.password_reset REQUESTER
+
+Recipient targets supported:
+  - REQUESTER              -> the user who owns the request
+  - APPROVER               -> the assigned approver (the request.approverId)
+  - MANAGER_OF_REQUESTER   -> the requester's manager (user.managerId)
+  - ROLE                   -> (reserved) all holders of a role
+
+MANDATORY types (cannot be opted out): request.assigned, auth.password_reset
+
+--------------------------------------------------------------------------------
+4. THE DELIVERY PIPELINE (step by step)
+--------------------------------------------------------------------------------
+
+1) A workflow action publishes an event:
+     - src/application/request.service.js  -> publish("request.submitted" | "request.cancelled" | "request.decided")
+     - src/application/approval.service.js -> publish("request.decided")
+     - src/application/user-admin.service.js -> publish("auth.password_reset")
+
+2) The EventBus runs every subscriber for that event. NotificationService
+   subscribes to ALL trigger-catalog events (subscribeToEvents in server.js).
+
+3) NotificationService.onEvent(event, payload):
+     a. Looks up the trigger for the event (assertTrigger).
+     b. Resolves the recipient ids from the payload + user records.
+     c. For each recipient calls create() which:
+          - loads the recipient's notificationPreferences
+          - applies shouldDeliver() (mandatory types always deliver; opted-out
+            types are skipped)
+          - persists a notification row
+     d. Subscriber failures are caught by the bus and logged — they NEVER
+        break the business action that triggered them.
+
+4) The navbar bell polls /notifications/unread-count; the inbox page lists
+   /notifications. Marking read updates readAt.
+
+--------------------------------------------------------------------------------
+5. DATA MODEL
+--------------------------------------------------------------------------------
+
+Collection: notifications
+  userId          ObjectId (ref User)      the recipient
+  type            string                   e.g. "request.assigned"
+  title           string
+  body            string                   (optional context text)
+  link            string                   (frontend navigation hint)
+  relatedRequestId ObjectId (ref Request)  the request this notification is about
+  readAt          Date | null              null = unread
+
+Per-user preferences are stored on the User document:
+  user.notificationPreferences = { optOutTypes: ["request.decided", ...] }
+
+--------------------------------------------------------------------------------
+6. API SURFACE
+--------------------------------------------------------------------------------
+
+  GET  /api/v1/notifications                 Own inbox (unread first, paginated)
+  GET  /api/v1/notifications/unread-count    { data: { unread: N } } for the bell
+  POST /api/v1/notifications/:id/read        Mark one notification read (owner only)
+  POST /api/v1/notifications/read-all        Mark all read
+  GET  /api/v1/notifications/preferences     { data: { optOutTypes, mandatoryTypes } }
+  PUT  /api/v1/notifications/preferences     { optOutTypes: string[] }
+
+All notification endpoints are owner-scoped: a user can only ever see or
+mutate their own notifications.
+
+--------------------------------------------------------------------------------
+7. SEE IT WORKING (demo accounts)
+--------------------------------------------------------------------------------
+
+Demo users:
+  employee    / Employee2026!    (EMPLOYEE — requester)
+  manager     / Manager2026!     (MANAGER  — approver of employee)
+  hradmin     / HrAdmin2026!     (HR_ADMIN)
+  superadmin  / SuperAdmin2026!  (SUPER_ADMIN)
+
+Steps:
+  1. Sign in as "employee".
+     - Click the bell in the top-right. Count should be 0.
+  2. Go to Leave -> submit an Annual Leave request (e.g. Sep 1 - Sep 3).
+  3. Sign out. Sign in as "manager".
+     - The bell shows UNREAD = 1 and the inbox lists:
+         "New request awaiting your approval"  (type request.assigned)
+  4. Open Approvals, open that request, approve it.
+  5. Sign out. Sign in as "employee".
+     - The bell shows UNREAD = 1 and the inbox lists:
+         "Your request was decided"  (type request.decided)
+     - Open My Requests to see it is APPROVED.
+  6. Preferences:
+     - As "employee", open the Notifications page -> Preferences.
+     - Opt out of "request.decided" (it is NOT mandatory).
+     - Future decisions will no longer notify you, but "request.assigned"
+       (mandatory) still notifies approvers.
+
+"request.assigned" and "auth.password_reset" are mandatory and can never be
+opted out — they are accountability-critical.
+
+--------------------------------------------------------------------------------
+8. EXTENDING (e.g. email channel, new triggers)
+--------------------------------------------------------------------------------
+
+- To add a NEW notification type: add an entry to TRIGGER_CATALOG in
+  src/domain/notification.js, then publish the event from the relevant
+  application service. The subscriber picks it up automatically.
+- To deliver by EMAIL later: add a channel adapter inside
+  NotificationService.create() (after the in-app record). The in-app record
+  remains the source of truth; email is an extra delivery channel.
+- Rate/per-user preferences apply at create() time via shouldDeliver().
+
+================================================================================
+END OF GUIDE
+================================================================================

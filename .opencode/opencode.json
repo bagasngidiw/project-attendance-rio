@@ -1,0 +1,35 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+  "agent": {
+    "developer": {
+      "mode": "primary",
+      "model": "opencode-go/deepseek-v4-flash",
+      "prompt": "{file:./prompts/DEVELOPER.md}",
+      "permission": {
+        "edit": "allow",
+        "bash": "allow"
+      },
+	  "description": "Develop Features"
+    },
+    "consultant": {
+      "mode": "primary",
+      "model": "opencode-go/deepseek-v4-flash",
+      "prompt": "{file:./prompts/CONSULTANT.md}",
+      "permission": {
+        "edit": "allow",
+        "bash": "allow"
+      },
+	  "description": "Propose Features"
+    },
+    "designer": {
+      "mode": "primary",
+      "model": "opencode-go/deepseek-v4-flash",
+      "prompt": "{file:./prompts/DESIGNER.md}",
+      "permission": {
+        "edit": "allow",
+        "bash": "allow"
+      },
+	  "description": "Design Features"
+    },
+  }
+}

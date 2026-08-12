@@ -1,0 +1,126 @@
+Project Name:
+Internal HRIS SaaS Platform
+
+Project Overview:
+
+Build a single enterprise-grade HRIS (Human Resource Information System) SaaS web application that uses Role-Based Access Control (RBAC). All users access the same application after authentication, but the available menus, pages, actions, and permissions are determined by their assigned roles.
+
+The application must be modular, scalable, secure, and maintainable, allowing future expansion into payroll, reimbursement, recruitment, asset management, announcements, performance reviews, and other HR modules.
+
+System Architecture:
+
+There is only one web application.
+
+After login:
+- Authentication identifies the user.
+- Authorization determines the user's permissions.
+- Navigation, pages, actions, and API access are dynamically controlled by Role-Based Access Control (RBAC).
+
+Example roles:
+- Employee
+- HR Administrator
+- Manager
+- Super Administrator
+
+Each role shares the same application but has different permissions.
+
+Employee Role Permissions:
+
+Dashboard
+- View personal dashboard
+- View profile
+- Manage account settings
+
+Attendance
+- Clock In
+- Clock Out
+- View attendance history
+
+Overtime
+- Submit overtime requests
+- View overtime status
+- View overtime history
+
+Business Trip
+- Submit business trip requests
+- View business trip history
+
+Leave & Permission
+- Submit:
+  - Sick Leave
+  - Personal Leave
+  - Annual Leave
+- View approval status
+- View request history
+
+Administrator Role Permissions:
+
+Dashboard
+- Company statistics
+- Employee statistics
+- Personal profile
+
+Attendance
+- View all employee attendance
+- Correct attendance records
+- Manage attendance data
+
+Overtime
+- Review overtime requests
+- Approve or reject requests
+- Manage overtime records
+
+Business Trip
+- Review business trip requests
+- Approve or reject requests
+
+Leave & Permission
+- Review leave requests
+- Approve or reject requests
+
+User Management
+- Create users
+- Edit users
+- Deactivate users
+- Reset passwords
+- Assign roles
+- Manage departments
+- Manage positions
+
+Reporting
+- Attendance reports
+- Leave reports
+- Overtime reports
+- Business trip reports
+- Export Excel
+- Export PDF
+
+Core Functional Requirements:
+
+- Authentication
+- Authorization
+- Role-Based Access Control (RBAC)
+- Permission-based navigation
+- Permission-based API authorization
+- Approval workflows
+- Activity logs
+- Audit logs
+- Notifications
+- Search
+- Filtering
+- Pagination
+- File uploads
+- Dashboard analytics
+- Responsive UI
+
+Non-Functional Requirements:
+
+- Enterprise architecture
+- Clean Architecture
+- Modular architecture
+- SOLID principles
+- High performance
+- Security best practices
+- Comprehensive testing
+- Scalable SaaS design
+- Cloud deployment ready

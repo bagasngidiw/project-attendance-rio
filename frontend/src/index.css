@@ -1,0 +1,47 @@
+@import "tailwindcss";
+
+/**
+ * Fixed SIMBIKA product design system — the single source of truth for colors.
+ * Customers CANNOT modify these; they are not Platform Settings.
+ */
+:root {
+  /* Brand */
+  --brand-primary: #d90429;
+  --brand-on-primary: #ffffff;
+  --brand-secondary: #ff6b00;
+  --brand-on-secondary: #111827;
+  --brand-accent: #ff8a00;
+  /* Neutral / layout */
+  --brand-background: #f7f8fa;
+  --brand-surface: #ffffff;
+  --brand-text: #111827;
+  --brand-text-muted: #64748b;
+  --brand-border: #e2e8f0;
+  /* Status */
+  --brand-success: #16a34a;
+  --brand-warning: #f59e0b;
+  --brand-danger: #dc2626;
+  --brand-info: #2563eb;
+}
+
+/**
+ * table-scroll — a table region that scrolls internally instead of growing
+ * the page. `max-height` keeps the page chrome (title, filters, pagination)
+ * visible while long tables scroll underneath it, and `overscroll-contain`
+ * stops scroll chaining back to the document once the table reaches an end.
+ */
+@utility table-scroll {
+  overflow: auto;
+  max-height: calc(100vh - 15rem);
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
+}
+
+/* Sticky table headers inside a scrollable region (uses the brand surface
+   color so headers stay opaque while scrolling). */
+.table-scroll thead th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background-color: var(--brand-surface);
+}
