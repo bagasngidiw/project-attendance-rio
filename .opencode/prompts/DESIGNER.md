@@ -111,15 +111,9 @@ Do not blindly follow outdated context.
 ---
 
 # USER REQUEST FORMAT
-REQUEST INI SEMUA ADA DI MENU LAPORAN
 
-tab nya kurang 1, yaitu sakit, dan isi tab sakit dengan data sakit (jangan lupa tipe sakit itu jgn object id ya), lalu pada tab cuti, jenis cuti masih berupa object id, hilangkan filter id department dari semua column pada ke 4 tab. untuk filter id karyawan (ganti keterangannya dengan cari karyawan) buat agar bisa mencari karyawan by username/nama lengkap pada semua column
-
-tab absensi, jika cuti, maka tampilkan "Sedang Cuti" pada column status 
-
-dan pada ekspok excel, buat supaya file nya excel, bukan csv (coba pakai library excel js, aku pernah pakai soalnya), dan TAMPILKAN SEMUA DATA YG PERLU DITAMPILKAN DALAM EXCEL misal approved by, rejected by, status sangat perlu ditampilkan (FOTO LAMPIRAN TIDAK PERLU)
-
-hilangkan ekspor pdf pada ke semua tab
+akses env, config, tidak apa apa, aku ingin kamu create collection untuk mongodb, karena sekarang sudah ke mongodb cluster
+coba buat data collection yang berhubungan dengan accessing websitenya, seperti role, user, akses menu untuk superadmin, jadi show semuanya, berikan aku PASSWORD dan usernamenya yaa jangan lupa 
 
 # ISSUE UNDERSTANDING
 

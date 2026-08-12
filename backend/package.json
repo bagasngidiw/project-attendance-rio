@@ -9,7 +9,8 @@
     "test": "node --test --test-concurrency=1 --test-reporter=spec \"test/unit/**/*.test.js\" \"test/integration/**/*.test.js\"",
     "test:unit": "node --test --test-concurrency=1 --test-reporter=spec \"test/unit/**/*.test.js\"",
     "test:integration": "node --test --test-concurrency=1 --test-reporter=spec \"test/integration/**/*.test.js\"",
-    "db:reset": "node scripts/reset-database.js"
+    "db:reset": "node scripts/reset-database.js",
+    "access:show": "node scripts/show-access-collections.js"
   },
   "keywords": [],
   "author": "",

@@ -1,0 +1,8 @@
+{
+  "rewrites": [
+    {
+      "source": "/api/:path*",
+      "destination": "https://walk-sycamore-sublevel.ngrok-free.dev/api/:path*"
+    }
+  ]
+}

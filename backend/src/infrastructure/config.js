@@ -20,7 +20,7 @@ function createConfig() {
     port: readNumber("PORT", 5000),
     mongoUri: readEnv(
       "MONGO_URI",
-      "mongodb://127.0.0.1:27017/attendance_db"
+      "mongodb+srv://bagasvanbacdim:AcC7uZly6oV1Av7i@hris-project.thgt0lt.mongodb.net/attendance_db"
     ),
     nodeEnv: readEnv("NODE_ENV", "development"),
 
