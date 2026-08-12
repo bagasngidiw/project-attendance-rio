@@ -171,7 +171,8 @@ const configuredApiBase = (
 
 /** API client with automatic access-token attachment and refresh-on-401. */
 export const api: AxiosInstance = axios.create({
-  baseURL: configuredApiBase ? `${configuredApiBase}/api/v1` : "/api/v1",
+  // baseURL: configuredApiBase ? `${configuredApiBase}/api/v1` : "/api/v1",
+  baseURL: "/api/v1",
   headers: { "Content-Type": "application/json", "ngrok-skip-browser-warning": "true", },
 });
 
