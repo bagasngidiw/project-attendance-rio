@@ -13,6 +13,10 @@ const createUserDto = z.object({
   departmentId: z.string().min(1).optional().nullable(),
   positionId: z.string().min(1).optional().nullable(),
   managerId: z.string().min(1).optional().nullable(),
+  // NEW UPDATE TAD SIMBIKA: NIP + Kontrak + Penempatan (ObjectId refs).
+  nip: z.string().trim().max(64).optional(),
+  contractTypeId: z.string().min(1).optional().nullable(),
+  placementId: z.string().min(1).optional().nullable(),
   roleIds: z.array(z.string().min(1)).min(1, "At least one role is required."),
   initialPassword: z.string().min(8).max(128),
   // TODO.md FR-001: allocated leave quota (hari) for balance-based types.
@@ -25,6 +29,10 @@ const updateUserDto = z.object({
   departmentId: z.string().min(1).optional().nullable(),
   positionId: z.string().min(1).optional().nullable(),
   managerId: z.string().min(1).optional().nullable(),
+  // NEW UPDATE TAD SIMBIKA: NIP + Kontrak + Penempatan (ObjectId refs).
+  nip: z.string().trim().max(64).optional(),
+  contractTypeId: z.string().min(1).optional().nullable(),
+  placementId: z.string().min(1).optional().nullable(),
   // TODO.md FR-002: quota change requires a mandatory reason.
   jatahCuti: z.number().int().min(0).max(365).optional(),
   reason: z.string().trim().min(1).max(512).optional(),

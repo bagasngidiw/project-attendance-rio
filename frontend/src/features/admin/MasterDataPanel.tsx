@@ -19,7 +19,7 @@ export interface MasterItem {
   name: string;
   description: string;
   status: "ACTIVE" | "PENDING" | "INACTIVE";
-  isSystem: boolean;
+  isSystem?: boolean;
   isBalanceBased?: boolean;
   maxDaysPerRequest?: number | null;
   requiredSupportingInfo?: boolean;

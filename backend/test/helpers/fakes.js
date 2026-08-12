@@ -277,7 +277,7 @@ class InMemoryUserRepository {
     return user;
   }
 
-  async create({ username, email, name, passwordHash, status, mustChangePassword, departmentId, positionId, managerId }) {
+  async create({ username, email, name, passwordHash, status, mustChangePassword, departmentId, positionId, managerId, nip = "", contractTypeId, placementId }) {
     const normalizedUsername = username.trim().toLowerCase();
     const normalizedEmail = email.trim().toLowerCase();
     if (
@@ -307,6 +307,9 @@ class InMemoryUserRepository {
       departmentId: departmentId ?? null,
       positionId: positionId ?? null,
       managerId: managerId ?? null,
+      nip,
+      contractTypeId: contractTypeId ?? null,
+      placementId: placementId ?? null,
       roleIds: [],
       save: async function save() {
         return this;
@@ -347,13 +350,16 @@ class InMemoryUserRepository {
     return user;
   }
 
-  async update(id, { name, email, departmentId, positionId, managerId } = {}) {
+  async update(id, { name, email, departmentId, positionId, managerId, nip, contractTypeId, placementId } = {}) {
     const user = await this.assertExists(id);
     if (email !== undefined && email !== "") user.email = email.trim().toLowerCase();
     if (name !== undefined && name !== "") user.name = name.trim();
     if (departmentId !== undefined) user.departmentId = departmentId || null;
     if (positionId !== undefined) user.positionId = positionId || null;
     if (managerId !== undefined) user.managerId = managerId || null;
+    if (nip !== undefined) user.nip = String(nip ?? "").trim();
+    if (contractTypeId !== undefined) user.contractTypeId = contractTypeId || null;
+    if (placementId !== undefined) user.placementId = placementId || null;
     await this.save(user);
     return user;
   }

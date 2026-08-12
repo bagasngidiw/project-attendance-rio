@@ -44,6 +44,11 @@ const userSchema = new mongoose.Schema(
       default: null,
       index: true,
     },
+    // NIP + master-data relations (Kontrak / Penempatan) — ObjectId refs that
+    // are populated into display names by UserAdminService.
+    nip: { type: String, default: "", trim: true },
+    contractTypeId: { type: mongoose.Schema.Types.ObjectId, ref: "ContractType", default: null, index: true },
+    placementId: { type: mongoose.Schema.Types.ObjectId, ref: "Placement", default: null, index: true },
     // Denormalized mirror of the user_roles join (design §7.5): the user
     // document carries its role relations as Role ObjectIds so collections are
     // self-describing. `user_roles` remains the source of truth; every role

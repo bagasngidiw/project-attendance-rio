@@ -1,20 +1,28 @@
 /**
- * MasterDataPage — Superadmin master data for Cuti types and Sakit types
- * (FR-058 / TODO.md §5). Guarded by `platform:settings`. Changes are
+ * MasterDataPage — Superadmin master data for Cuti types, Sakit types,
+ * Kontrak (contract types) and Penempatan (placements) (FR-058 / TODO.md §5 /
+ * NEW UPDATE TAD SIMBIKA). Guarded by `platform:settings`. Changes are
  * validated, persisted, and audited (SETTINGS.CHANGED) by the backend.
  */
 
 import { useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 
-import { leaveTypeAdminApi, sicknessTypeAdminApi } from "@/lib/axios";
+import {
+  contractTypeAdminApi,
+  leaveTypeAdminApi,
+  placementAdminApi,
+  sicknessTypeAdminApi,
+} from "@/lib/axios";
 import { MasterDataPanel, type MasterItem, type MasterCreatePayload } from "./MasterDataPanel";
 
-type MasterTab = "leave" | "sickness";
+type MasterTab = "leave" | "sickness" | "contract" | "placement";
 
 const TABS: Array<{ key: MasterTab; label: string }> = [
   { key: "leave", label: "Tipe Cuti" },
   { key: "sickness", label: "Tipe Sakit" },
+  { key: "contract", label: "Kontrak" },
+  { key: "placement", label: "Penempatan" },
 ];
 
 export function MasterDataPage() {
@@ -29,12 +37,26 @@ export function MasterDataPage() {
     queryKey: ["admin-sickness-types"],
     queryFn: () => sicknessTypeAdminApi.list().then((r) => r.data.data ?? []),
   });
+  const contractQuery = useQuery({
+    queryKey: ["admin-contract-types"],
+    queryFn: () => contractTypeAdminApi.list().then((r) => r.data.data ?? []),
+  });
+  const placementQuery = useQuery({
+    queryKey: ["admin-placements"],
+    queryFn: () => placementAdminApi.list().then((r) => r.data.data ?? []),
+  });
 
   function invalidateLeave() {
     queryClient.invalidateQueries({ queryKey: ["admin-leave-types"] });
   }
   function invalidateSickness() {
     queryClient.invalidateQueries({ queryKey: ["admin-sickness-types"] });
+  }
+  function invalidateContract() {
+    queryClient.invalidateQueries({ queryKey: ["admin-contract-types"] });
+  }
+  function invalidatePlacement() {
+    queryClient.invalidateQueries({ queryKey: ["admin-placements"] });
   }
 
   async function createLeave(payload: MasterCreatePayload) {
@@ -45,14 +67,23 @@ export function MasterDataPage() {
     await sicknessTypeAdminApi.create(payload);
     invalidateSickness();
   }
+  async function createContract(payload: MasterCreatePayload) {
+    await contractTypeAdminApi.create(payload);
+    invalidateContract();
+  }
+  async function createPlacement(payload: MasterCreatePayload) {
+    await placementAdminApi.create(payload);
+    invalidatePlacement();
+  }
 
   return (
     <div className="mx-auto max-w-4xl space-y-6">
       <div>
         <h2 className="text-xl font-bold">Master Data</h2>
         <p className="text-sm text-slate-500">
-          Kelola daftar tipe cuti dan tipe sakit. Usulan "Tambahkan sendiri"
-          dari karyawan muncul dengan status menunggu aktivasi.
+          Kelola daftar tipe cuti, tipe sakit, kontrak, dan penempatan. Usulan
+          "Tambahkan sendiri" dari karyawan muncul dengan status menunggu
+          aktivasi.
         </p>
       </div>
 
@@ -91,7 +122,7 @@ export function MasterDataPage() {
             invalidateLeave();
           }}
         />
-      ) : (
+      ) : tab === "sickness" ? (
         <MasterDataPanel
           title="Tipe Sakit"
           description="Jenis sakit yang tersedia pada form permintaan sakit."
@@ -106,6 +137,40 @@ export function MasterDataPage() {
           onDeactivate={async (id) => {
             await sicknessTypeAdminApi.deactivate(id);
             invalidateSickness();
+          }}
+        />
+      ) : tab === "contract" ? (
+        <MasterDataPanel
+          title="Kontrak"
+          description="Jenis kontrak yang tersedia untuk pengguna (NIP / kontrak kerja)."
+          items={(contractQuery.data ?? []) as MasterItem[]}
+          loading={contractQuery.isLoading}
+          error={contractQuery.isError}
+          onCreate={createContract}
+          onActivate={async (id) => {
+            await contractTypeAdminApi.activate(id);
+            invalidateContract();
+          }}
+          onDeactivate={async (id) => {
+            await contractTypeAdminApi.deactivate(id);
+            invalidateContract();
+          }}
+        />
+      ) : (
+        <MasterDataPanel
+          title="Penempatan"
+          description="Penempatan kerja yang tersedia untuk pengguna."
+          items={(placementQuery.data ?? []) as MasterItem[]}
+          loading={placementQuery.isLoading}
+          error={placementQuery.isError}
+          onCreate={createPlacement}
+          onActivate={async (id) => {
+            await placementAdminApi.activate(id);
+            invalidatePlacement();
+          }}
+          onDeactivate={async (id) => {
+            await placementAdminApi.deactivate(id);
+            invalidatePlacement();
           }}
         />
       )}

@@ -13,3 +13,8 @@
 AUTO_GIT_START.md
 AUTO_GIT_DAILY.md
 github personal access tokens repo bagas, PENTING!!!.txt
+
+# ============================================================
+# Office temp lock files (e.g. ~$file.xlsx while open in Excel)
+# ============================================================
+~$*

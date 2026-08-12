@@ -52,6 +52,14 @@ import type {
   SicknessTypeResponse,
 } from "@contracts/sickness";
 import type {
+  ContractTypeListResponse,
+  ContractTypeResponse,
+} from "@contracts/contract-type";
+import type {
+  PlacementListResponse,
+  PlacementResponse,
+} from "@contracts/placement";
+import type {
   LeaveTypeListResponse,
   LeaveTypeResponse,
   CreateLeaveTypeInput,
@@ -141,12 +149,18 @@ export interface UserAdminDto {
   departmentId?: string | null;
   positionId?: string | null;
   managerId?: string | null;
+  // NEW UPDATE TAD SIMBIKA: NIP + Kontrak + Penempatan refs + display names.
+  nip?: string;
+  contractTypeId?: string | null;
+  placementId?: string | null;
   roles: string[];
   // Relation model: role refs + human-readable names (never raw ObjectIds).
   roleIds: string[];
   departmentName?: string | null;
   positionName?: string | null;
   managerName?: string | null;
+  contractName?: string | null;
+  placementName?: string | null;
 }
 
 export interface UserListResult {
@@ -338,6 +352,10 @@ export const usersApi = {
     departmentId?: string | null;
     positionId?: string | null;
     managerId?: string | null;
+    // NEW UPDATE TAD SIMBIKA: NIP + Kontrak + Penempatan.
+    nip?: string;
+    contractTypeId?: string | null;
+    placementId?: string | null;
     roleIds: string[];
     initialPassword: string;
     // TODO.md FR-001: allocated leave quota (hari) for balance-based types.
@@ -351,6 +369,10 @@ export const usersApi = {
       departmentId?: string | null;
       positionId?: string | null;
       managerId?: string | null;
+      // NEW UPDATE TAD SIMBIKA: NIP + Kontrak + Penempatan.
+      nip?: string;
+      contractTypeId?: string | null;
+      placementId?: string | null;
       // TODO.md FR-002: quota change + mandatory reason.
       jatahCuti?: number;
       reason?: string;
@@ -594,6 +616,42 @@ export const sicknessTypeAdminApi = {
     api.post<SicknessTypeResponse>(`/admin/sickness-types/${id}/activate`),
   deactivate: (id: string) =>
     api.post<SicknessTypeResponse>(`/admin/sickness-types/${id}/deactivate`),
+};
+
+/** Contract-type master data API (active list for user forms). */
+export const contractTypeApi = {
+  list: () => api.get<ContractTypeListResponse>("/contract-types"),
+};
+
+/** Superadmin master-data API: contract types (guarded by platform:settings). */
+export const contractTypeAdminApi = {
+  list: () => api.get<ContractTypeListResponse>("/admin/contract-types"),
+  create: (body: { key: string; name: string; description?: string }) =>
+    api.post<ContractTypeResponse>("/admin/contract-types", body),
+  update: (id: string, body: { name?: string; description?: string }) =>
+    api.put<ContractTypeResponse>(`/admin/contract-types/${id}`, body),
+  activate: (id: string) =>
+    api.post<ContractTypeResponse>(`/admin/contract-types/${id}/activate`),
+  deactivate: (id: string) =>
+    api.post<ContractTypeResponse>(`/admin/contract-types/${id}/deactivate`),
+};
+
+/** Placement master data API (active list for user forms). */
+export const placementApi = {
+  list: () => api.get<PlacementListResponse>("/placements"),
+};
+
+/** Superadmin master-data API: placements (guarded by platform:settings). */
+export const placementAdminApi = {
+  list: () => api.get<PlacementListResponse>("/admin/placements"),
+  create: (body: { key: string; name: string; description?: string }) =>
+    api.post<PlacementResponse>("/admin/placements", body),
+  update: (id: string, body: { name?: string; description?: string }) =>
+    api.put<PlacementResponse>(`/admin/placements/${id}`, body),
+  activate: (id: string) =>
+    api.post<PlacementResponse>(`/admin/placements/${id}/activate`),
+  deactivate: (id: string) =>
+    api.post<PlacementResponse>(`/admin/placements/${id}/deactivate`),
 };
 
 /** FR-001: Superadmin approval configuration API. */

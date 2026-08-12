@@ -16,7 +16,7 @@ import { Modal } from "@/components/ui/Modal";
 import { Input } from "@/components/ui/Input";
 import { Button } from "@/components/ui/Button";
 import { PasswordHints } from "@/features/auth/PasswordHints";
-import { DepartmentSelect, PositionSelect } from "@/features/org/OrgPicker";
+import { ContractTypeSelect, PlacementSelect } from "@/features/admin/MasterSelects";
 import {
   QuotaAndScheduleSection,
   DEFAULT_QUOTA_SCHEDULE,
@@ -35,8 +35,9 @@ export function CreateUserDialog({
     email: "",
     name: "",
     initialPassword: "",
-    departmentId: "",
-    positionId: "",
+    nip: "",
+    contractTypeId: "",
+    placementId: "",
   });
   const [quotaSchedule, setQuotaSchedule] = useState<QuotaScheduleValue>(DEFAULT_QUOTA_SCHEDULE);
   const [selectedRoles, setSelectedRoles] = useState<Set<string>>(new Set());
@@ -73,8 +74,9 @@ export function CreateUserDialog({
     try {
       await usersApi.create({
         ...form,
-        departmentId: form.departmentId || null,
-        positionId: form.positionId || null,
+        nip: form.nip.trim() || undefined,
+        contractTypeId: form.contractTypeId || null,
+        placementId: form.placementId || null,
         roleIds: [...selectedRoles],
         jatahCuti:
           quotaSchedule.jatahCuti === "" ? undefined : Number(quotaSchedule.jatahCuti),
@@ -121,15 +123,22 @@ export function CreateUserDialog({
           onChange={(e) => update("name", e.target.value)}
           required
         />
+        <Input
+          label="NIP"
+          value={form.nip}
+          onChange={(e) => update("nip", e.target.value)}
+          maxLength={64}
+          placeholder="Nomor Induk Pegawai (opsional)"
+        />
 
         <div className="grid gap-4 sm:grid-cols-2">
-          <DepartmentSelect
-            value={form.departmentId}
-            onChange={(id) => update("departmentId", id)}
+          <ContractTypeSelect
+            value={form.contractTypeId}
+            onChange={(id) => update("contractTypeId", id)}
           />
-          <PositionSelect
-            value={form.positionId}
-            onChange={(id) => update("positionId", id)}
+          <PlacementSelect
+            value={form.placementId}
+            onChange={(id) => update("placementId", id)}
           />
         </div>
 

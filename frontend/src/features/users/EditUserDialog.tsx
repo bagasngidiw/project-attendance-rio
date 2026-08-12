@@ -18,6 +18,7 @@ import { Input } from "@/components/ui/Input";
 import { Button } from "@/components/ui/Button";
 import { Spinner } from "@/components/ui/Spinner";
 import { useLeaveTypeNames } from "@/features/requests/useLeaveTypeNames";
+import { ContractTypeSelect, PlacementSelect } from "@/features/admin/MasterSelects";
 
 import type { UserListItem } from "./types";
 import {
@@ -29,14 +30,19 @@ export function EditUserDialog({
   user,
   onClose,
   onSaved,
+  readOnly = false,
 }: {
   user: UserListItem;
   onClose: () => void;
   onSaved: () => void;
+  readOnly?: boolean;
 }) {
   const [form, setForm] = useState({
     name: user.name,
     email: user.email,
+    nip: user.nip ?? "",
+    contractTypeId: user.contractTypeId ?? "",
+    placementId: user.placementId ?? "",
   });
   const [quotaSchedule, setQuotaSchedule] = useState<QuotaScheduleValue>({
     jatahCuti: "",
@@ -94,6 +100,9 @@ export function EditUserDialog({
     try {
       await usersApi.update(user.id, {
         ...form,
+        nip: form.nip.trim() || undefined,
+        contractTypeId: form.contractTypeId || null,
+        placementId: form.placementId || null,
         ...(hasQuotaChange ? { jatahCuti: newQuota ?? 0, reason: reason.trim() } : {}),
       });
       await usersApi.updateWorkSchedule(user.id, {
@@ -119,13 +128,14 @@ export function EditUserDialog({
   }
 
   return (
-    <Modal title={`Edit ${user.name}`} onClose={onClose}>
+    <Modal title={readOnly ? `Lihat ${user.name}` : `Edit ${user.name}`} onClose={onClose}>
       <form onSubmit={handleSubmit} className="space-y-4">
         <Input
           label="Nama lengkap"
           value={form.name}
           onChange={(e) => update("name", e.target.value)}
           required
+          disabled={readOnly}
         />
         <Input
           label="Email"
@@ -133,7 +143,29 @@ export function EditUserDialog({
           value={form.email}
           onChange={(e) => update("email", e.target.value)}
           required
+          disabled={readOnly}
         />
+        <Input
+          label="NIP"
+          value={form.nip}
+          onChange={(e) => update("nip", e.target.value)}
+          maxLength={64}
+          placeholder="Nomor Induk Pegawai (opsional)"
+          disabled={readOnly}
+        />
+
+        <div className="grid gap-4 sm:grid-cols-2">
+          <ContractTypeSelect
+            value={form.contractTypeId}
+            onChange={(id) => update("contractTypeId", id)}
+            disabled={readOnly}
+          />
+          <PlacementSelect
+            value={form.placementId}
+            onChange={(id) => update("placementId", id)}
+            disabled={readOnly}
+          />
+        </div>
 
         <div className="rounded-xl border border-slate-200 p-4">
           <h4 className="font-semibold">Jatah Cuti Saat Ini</h4>
@@ -170,7 +202,7 @@ export function EditUserDialog({
               Perubahan: {diff > 0 ? `+${diff}` : diff} hari (baru: {newQuota} hari)
             </p>
           ) : null}
-          {hasQuotaChange ? (
+          {hasQuotaChange && !readOnly ? (
             <div className="mt-3">
               <Input
                 label="Alasan perubahan jatah cuti"
@@ -183,7 +215,11 @@ export function EditUserDialog({
           ) : null}
         </div>
 
-        <QuotaAndScheduleSection value={quotaSchedule} onChange={setQuotaSchedule} />
+        <QuotaAndScheduleSection
+          value={quotaSchedule}
+          onChange={setQuotaSchedule}
+          disabled={readOnly}
+        />
 
         {serverError ? (
           <div
@@ -196,11 +232,13 @@ export function EditUserDialog({
 
         <div className="flex justify-end gap-2">
           <Button type="button" variant="secondary" onClick={onClose}>
-            Batal
+            {readOnly ? "Tutup" : "Batal"}
           </Button>
-          <Button type="submit" loading={submitting}>
-            Simpan
-          </Button>
+          {!readOnly ? (
+            <Button type="submit" loading={submitting}>
+              Simpan
+            </Button>
+          ) : null}
         </div>
       </form>
     </Modal>

@@ -112,12 +112,19 @@ Do not blindly follow outdated context.
 
 # USER REQUEST FORMAT
 
-jadi sekarang, website frontend ku sudah up ke prod (pakai vercel) dan be nya adalah ngrok (aku tidak bisa menemukan backend deploy yg gratis, jadi kita pakai ngrok aja) yang di konekin pakai vercel, sekarang problem nya adalah attachment, tadi aku coba ganti logo aplikasi dan img src nya me-return /api/v1/platform/branding-assets/logo-1786550527489-a7ec9d2aa7fc.png
+coba baca file di dalam ai-project-context/NEW UPDATE TAD SIMBIKA.xlsx
+aku tidak ingin menambahkan fitur lagi karena sudah di live, dan aku tidak mau memakai fitur organisasi untuk menempatkan jabatan, penempatan, nama kontrak, dan NIP, tapi karena sepertinya memang flow yang client mau adalah punya data2 seperti yg ada di excel tersebut, maka mau tidak mau ya harus ada menu baru ya, kalau aku kepikiran membuat 2 fitur pada master data
+yaitu KONTRAK dan PENEMPATAN, jadi pada menu master data kan sudah ada tipe sakit dan tipe cuti ya, nah aku ingin penambahan 2 lagi yaitu Kontrak dan Penempatan (sepertinya hanya butuh tipe data string), (JANGAN LUPA buat seperti Tipe sakit dan Tipe cuti yaitu dapat dinonaktifkan)
 
-kayanya itu masih salah, apakah seharusnya ditambahkan url ngrok seperti ini  https://walk-sycamore-sublevel.ngrok-free.dev/api/v1/platform/branding-assets/logo-1786550527489-a7ec9d2aa7fc.png ? atau tidak, coba perbaiki agar terbaca di live vercel
+lalu pada menu pengguna, remove form untuk departmen dan jabatan (sekaligus pada column departmen, jabatan dan manajer pada komponen list pengguna). nah masih di menu pengguna, ketika menambahkan pengguna baru dan edit pengguna, biarkan user memilih Kontrak dan Penempatan (data pilihan diambil dari Master data KONTRAK dan PENEMPATAN), JANGAN buat hardcode data pada pilihan Kontrak dan Penempatan di menu pengguna baru / edit, biarkan itu mengambil datanya dari databse Kontrak dan Penempatan (simpan pada collection user sebagai object id (harus di populate just in case diperlukan untuk mendapatkan data kontrak dan penempatan))
 
+lalu masih pada menu pengguna dan form pengguna baru dan edit pengguna, tambahkan form NIP (yang ini jangan dibuatkan kaya master ya, biarkan saja form nya disimpan dalam string pada collection pengguna seperti "nip")
 
-dan untuk fitur attachment karyawan yg lain seperti izin, sakit, cuti, perjalanan dinas, coba scan code nya di mana yang me-return sebuah attachment ( kalau seingatku, pada detail popup untuk menu tadi ada url yg harus ditambahkan https://walk-sycamore-sublevel.ngrok-free.dev agar gambar/file nya dapat terdeteksi) dan pada menu persetujuan/kotak masuk persetujuan, riwayat persetujuan sepertinya juga ada, coba pahami posisiku sekarang ya, dan tambahkan https://walk-sycamore-sublevel.ngrok-free.dev untuk setiap file attachments, karena aku ingin mempresentasikannya besok
+buat adjusment tersebut end to end (artinya dari backend sampai frontend sampai UI, proses dengan baik, testing dengan baik, jangan sampai ada error pada pembuatan Master data Kontrak dan Penempatan, jangan sampai error juga ketika memilih Kontrak dan Penempatan, baik di form pengguna baru maupun pada form edit pengguna).
+
+TAMBAHKAN AKSI "Lihat" pada menu pengguna, gunakan komponen yang sama dengan yang dipakai aksi "Edit", hanya saja pada Aksi "Lihat" tidak ada tombol "Simpan", TAMPILKAN HAL YG SAMA DENGAN APA YG ADA DI AKSI "Detail" jadi NIP, Kontrak dan Penempatan akan ada juga pada aksi "Lihat"
+
+TOLONG PASTIKAN SEMUA CODE SUDAH DI TESTED DENGAN AMAN, karena hari ini akan mau di presentasikan kepada user, terima kasih
 
 # ISSUE UNDERSTANDING
 

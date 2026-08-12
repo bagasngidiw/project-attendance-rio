@@ -33,11 +33,14 @@ const DAY_OPTIONS: Array<{ value: number; label: string }> = [
 export function QuotaAndScheduleSection({
   value,
   onChange,
+  disabled = false,
 }: {
   value: QuotaScheduleValue;
   onChange: (next: QuotaScheduleValue) => void;
+  disabled?: boolean;
 }) {
   function toggleDay(day: number) {
+    if (disabled) return;
     const next = new Set(value.workingDays);
     if (next.has(day)) next.delete(day);
     else next.add(day);
@@ -59,7 +62,8 @@ export function QuotaAndScheduleSection({
             value={value.jatahCuti}
             onChange={(e) => onChange({ ...value, jatahCuti: e.target.value })}
             placeholder="mis. 12"
-            className="h-10 w-full rounded-lg border border-slate-200 bg-[var(--brand-surface)] px-3 text-sm focus:border-slate-900 focus:outline-none focus:ring-2 focus:ring-slate-900/10"
+            disabled={disabled}
+            className="h-10 w-full rounded-lg border border-slate-200 bg-[var(--brand-surface)] px-3 text-sm focus:border-slate-900 focus:outline-none focus:ring-2 focus:ring-slate-900/10 disabled:cursor-not-allowed disabled:bg-slate-50"
           />
         </div>
       </div>
@@ -74,12 +78,15 @@ export function QuotaAndScheduleSection({
             {DAY_OPTIONS.map((day) => (
               <label
                 key={day.value}
-                className="flex cursor-pointer items-center gap-1.5 rounded-lg border border-slate-200 px-2.5 py-1.5 text-sm has-checked:border-slate-900 has-checked:bg-slate-50"
+                className={`flex cursor-pointer items-center gap-1.5 rounded-lg border border-slate-200 px-2.5 py-1.5 text-sm has-checked:border-slate-900 has-checked:bg-slate-50 ${
+                  disabled ? "cursor-not-allowed opacity-60" : ""
+                }`}
               >
                 <input
                   type="checkbox"
                   checked={value.workingDays.includes(day.value)}
                   onChange={() => toggleDay(day.value)}
+                  disabled={disabled}
                   className="size-4 accent-slate-900"
                 />
                 {day.label}
@@ -96,7 +103,8 @@ export function QuotaAndScheduleSection({
               type="time"
               value={value.workingStartTime}
               onChange={(e) => onChange({ ...value, workingStartTime: e.target.value })}
-              className="h-10 w-full rounded-lg border border-slate-200 bg-[var(--brand-surface)] px-3 text-sm focus:border-slate-900 focus:outline-none"
+              disabled={disabled}
+              className="h-10 w-full rounded-lg border border-slate-200 bg-[var(--brand-surface)] px-3 text-sm focus:border-slate-900 focus:outline-none disabled:cursor-not-allowed disabled:bg-slate-50"
             />
           </div>
           <div>
@@ -107,7 +115,8 @@ export function QuotaAndScheduleSection({
               type="time"
               value={value.workingEndTime}
               onChange={(e) => onChange({ ...value, workingEndTime: e.target.value })}
-              className="h-10 w-full rounded-lg border border-slate-200 bg-[var(--brand-surface)] px-3 text-sm focus:border-slate-900 focus:outline-none"
+              disabled={disabled}
+              className="h-10 w-full rounded-lg border border-slate-200 bg-[var(--brand-surface)] px-3 text-sm focus:border-slate-900 focus:outline-none disabled:cursor-not-allowed disabled:bg-slate-50"
             />
           </div>
         </div>

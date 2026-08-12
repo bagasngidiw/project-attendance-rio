@@ -30,6 +30,8 @@ class UserAdminService {
    * @param {import('./password.service').PasswordService} deps.passwordService
    * @param {import('./audit.service').AuditService} deps.auditService
    * @param {import('../infrastructure/repositories/org.repository').OrgRepository} [deps.orgRepository] optional (FR-024 inactive-reference guard)
+   * @param {import('./contract-type.service').ContractTypeService} [deps.contractTypeService] optional (NEW UPDATE TAD SIMBIKA)
+   * @param {import('./placement.service').PlacementService} [deps.placementService] optional (NEW UPDATE TAD SIMBIKA)
    * @param {import('../infrastructure/event-bus').EventBus} [deps.eventBus] optional (FR-014 notification hook)
    */
   constructor({
@@ -40,6 +42,8 @@ class UserAdminService {
     passwordService,
     auditService,
     orgRepository = null,
+    contractTypeService = null,
+    placementService = null,
     eventBus = null,
     leaveTypeRepository = null,
     leaveBalanceService = null,
@@ -51,6 +55,8 @@ class UserAdminService {
     this.passwordService = passwordService;
     this.auditService = auditService;
     this.orgRepository = orgRepository;
+    this.contractTypeService = contractTypeService;
+    this.placementService = placementService;
     this.leaveTypeRepository = leaveTypeRepository;
     this.leaveBalanceService = leaveBalanceService;
     this.eventBus = eventBus;
@@ -73,6 +79,31 @@ class UserAdminService {
         throw new ConflictError(
           "The selected position is inactive. Reactivate it first.",
           "ORG_INACTIVE"
+        );
+      }
+    }
+  }
+
+  /**
+   * NEW UPDATE TAD SIMBIKA: guards the master-data refs (Kontrak / Penempatan)
+   * on assignment. A missing ref is rejected; an INACTIVE ref is rejected
+   * with a business message so the UI never silently persists a disabled
+   * value. Safe when the optional services are not wired (tests/fakes).
+   */
+  async assertActiveMasterRefs({ contractTypeId, placementId }) {
+    if (contractTypeId && this.contractTypeService) {
+      if (!(await this.contractTypeService.isActiveType(contractTypeId))) {
+        throw new ConflictError(
+          "The selected contract type is inactive. Reactivate it first.",
+          "MASTER_INACTIVE"
+        );
+      }
+    }
+    if (placementId && this.placementService) {
+      if (!(await this.placementService.isActiveType(placementId))) {
+        throw new ConflictError(
+          "The selected placement is inactive. Reactivate it first.",
+          "MASTER_INACTIVE"
         );
       }
     }
@@ -127,6 +158,11 @@ class UserAdminService {
       });
     }
 
+    await this.assertActiveMasterRefs({
+      contractTypeId: input.contractTypeId,
+      placementId: input.placementId,
+    });
+
     await this.passwordService.assertPasswordCompliant(input.initialPassword);
     const passwordHash = await this.passwordHasher.hash(input.initialPassword);
 
@@ -140,6 +176,9 @@ class UserAdminService {
       departmentId: input.departmentId,
       positionId: input.positionId,
       managerId: input.managerId,
+      nip: input.nip ?? "",
+      contractTypeId: input.contractTypeId,
+      placementId: input.placementId,
     });
 
     await this.userRoleRepository.replaceRolesForUser(
@@ -175,9 +214,17 @@ class UserAdminService {
       outcome: "SUCCESS",
       metadata: {
         roleKeys: roles.map((r) => r.key).sort(),
-        departmentId: user.departmentId?.toString?.() ?? null,
-        positionId: user.positionId?.toString?.() ?? null,
-        managerId: user.managerId?.toString?.() ?? null,
+      departmentId: user.departmentId?.toString?.() ?? null,
+      positionId: user.positionId?.toString?.() ?? null,
+      managerId: user.managerId?.toString?.() ?? null,
+      // NEW UPDATE TAD SIMBIKA: NIP + Kontrak + Penempatan (ObjectId refs +
+      // resolved display names).
+      nip: user.nip ?? "",
+      contractTypeId: user.contractTypeId?.toString?.() ?? null,
+      placementId: user.placementId?.toString?.() ?? null,
+        nip: user.nip ?? "",
+        contractTypeId: user.contractTypeId?.toString?.() ?? null,
+        placementId: user.placementId?.toString?.() ?? null,
         jatahCuti: input.jatahCuti ?? 0,
       },
       correlationId: actor.correlationId,
@@ -185,7 +232,9 @@ class UserAdminService {
       userAgent: actor.userAgent,
     });
 
-    return this.toUserDto(user, roles.map((r) => r.key), user.mustChangePassword);
+    return this.toUserDto(user, roles.map((r) => r.key), user.mustChangePassword, {
+      ...(await this.loadRelationNames([user]).then((m) => m.get(String(user.id)))),
+    });
   }
 
   /**
@@ -217,12 +266,20 @@ class UserAdminService {
       });
     }
 
+    await this.assertActiveMasterRefs({
+      contractTypeId: input.contractTypeId,
+      placementId: input.placementId,
+    });
+
     const before = {
       name: user.name,
       email: user.email,
       departmentId: user.departmentId?.toString?.() ?? null,
       positionId: user.positionId?.toString?.() ?? null,
       managerId: user.managerId?.toString?.() ?? null,
+      nip: user.nip ?? "",
+      contractTypeId: user.contractTypeId?.toString?.() ?? null,
+      placementId: user.placementId?.toString?.() ?? null,
     };
     const updated = await this.userRepository.update(userId, {
       name: input.name,
@@ -230,6 +287,9 @@ class UserAdminService {
       departmentId: input.departmentId,
       positionId: input.positionId,
       managerId: input.managerId,
+      nip: input.nip,
+      contractTypeId: input.contractTypeId,
+      placementId: input.placementId,
     });
 
     // TODO.md FR-002: quota edit — set entitlement (preserve consumed/reserved),
@@ -278,13 +338,17 @@ class UserAdminService {
         departmentId: updated.departmentId?.toString?.() ?? null,
         positionId: updated.positionId?.toString?.() ?? null,
         managerId: updated.managerId?.toString?.() ?? null,
+        nip: updated.nip ?? "",
+        contractTypeId: updated.contractTypeId?.toString?.() ?? null,
+        placementId: updated.placementId?.toString?.() ?? null,
       } },
       correlationId: actor.correlationId,
       ip: actor.ip,
       userAgent: actor.userAgent,
     });
 
-    return this.toUserDto(updated, roleKeys, updated.mustChangePassword);
+    const relations = await this.loadRelationNames([updated]).then((m) => m.get(String(updated.id)));
+    return this.toUserDto(updated, roleKeys, updated.mustChangePassword, relations);
   }
 
   /**
@@ -379,6 +443,9 @@ class UserAdminService {
       departmentId: user.departmentId?.toString?.() ?? null,
       positionId: user.positionId?.toString?.() ?? null,
       managerId: user.managerId?.toString?.() ?? null,
+      nip: user.nip ?? "",
+      contractTypeId: user.contractTypeId?.toString?.() ?? null,
+      placementId: user.placementId?.toString?.() ?? null,
     };
     const names = await this.loadRelationNames([normalized]);
     return this.toUserDto(normalized, roleKeys, user.mustChangePassword, {
@@ -488,6 +555,9 @@ class UserAdminService {
       departmentId: u.departmentId?.toString?.() ?? null,
       positionId: u.positionId?.toString?.() ?? null,
       managerId: u.managerId?.toString?.() ?? null,
+      nip: u.nip ?? "",
+      contractTypeId: u.contractTypeId?.toString?.() ?? null,
+      placementId: u.placementId?.toString?.() ?? null,
     }));
     const names = await this.loadRelationNames(withIds);
 
@@ -506,22 +576,31 @@ class UserAdminService {
   }
 
   /**
-   * Batch-loads department/position/manager display names for user DTOs.
+   * Batch-loads department/position/manager/contract/placement display names
+   * for user DTOs.
    *
-   * @param {Array<{ id: string, departmentId: string|null, positionId: string|null, managerId: string|null }>} users
-   * @returns {Promise<Map<string, { departmentName: string|null, positionName: string|null, managerName: string|null }>>}
+   * @param {Array<{ id: string, departmentId: string|null, positionId: string|null, managerId: string|null, contractTypeId: string|null, placementId: string|null }>} users
+   * @returns {Promise<Map<string, { departmentName: string|null, positionName: string|null, managerName: string|null, contractName: string|null, placementName: string|null }>>}
    */
   async loadRelationNames(users) {
     const deptIds = [...new Set(users.map((u) => u.departmentId).filter(Boolean))];
     const posIds = [...new Set(users.map((u) => u.positionId).filter(Boolean))];
     const mgrIds = [...new Set(users.map((u) => u.managerId).filter(Boolean))];
+    const contractIds = [...new Set(users.map((u) => u.contractTypeId).filter(Boolean))];
+    const placementIds = [...new Set(users.map((u) => u.placementId).filter(Boolean))];
 
-    const [departments, positions, managers] = await Promise.all([
+    const [departments, positions, managers, contracts, placements] = await Promise.all([
       this.orgRepository && deptIds.length > 0 ? this.orgRepository.listDepartments() : [],
       this.orgRepository && posIds.length > 0 ? this.orgRepository.listPositions() : [],
       mgrIds.length > 0
         ? this.userRepository.list({ userIds: mgrIds, page: 1, pageSize: 100 })
         : { items: [] },
+      contractIds.length > 0 && this.contractTypeService
+        ? Promise.all(contractIds.map((id) => this.contractTypeService.findById(id)))
+        : [],
+      placementIds.length > 0 && this.placementService
+        ? Promise.all(placementIds.map((id) => this.placementService.findById(id)))
+        : [],
     ]);
 
     const deptName = new Map(departments.map((d) => [String(d._id ?? d.id), d.name]));
@@ -529,6 +608,8 @@ class UserAdminService {
     const mgrName = new Map(
       managers.items.map((m) => [String(m._id ?? m.id), m.username])
     );
+    const contractName = new Map(contracts.filter(Boolean).map((c) => [String(c.id ?? c._id), c.name]));
+    const placementName = new Map(placements.filter(Boolean).map((p) => [String(p.id ?? p._id), p.name]));
 
     const map = new Map();
     for (const u of users) {
@@ -536,6 +617,8 @@ class UserAdminService {
         departmentName: u.departmentId ? deptName.get(u.departmentId) ?? null : null,
         positionName: u.positionId ? posName.get(u.positionId) ?? null : null,
         managerName: u.managerId ? mgrName.get(u.managerId) ?? null : null,
+        contractName: u.contractTypeId ? contractName.get(u.contractTypeId) ?? null : null,
+        placementName: u.placementId ? placementName.get(u.placementId) ?? null : null,
       });
     }
     return map;
@@ -615,6 +698,11 @@ class UserAdminService {
       departmentId: user.departmentId?.toString?.() ?? null,
       positionId: user.positionId?.toString?.() ?? null,
       managerId: user.managerId?.toString?.() ?? null,
+      // NEW UPDATE TAD SIMBIKA: NIP + Kontrak + Penempatan (ObjectId refs +
+      // resolved display names).
+      nip: user.nip ?? "",
+      contractTypeId: user.contractTypeId?.toString?.() ?? null,
+      placementId: user.placementId?.toString?.() ?? null,
       // TODO.md §7/§8/§9: employee work schedule + per-type leave quotas.
       workingDays: user.workingDays ?? [],
       workingStartTime: user.workingStartTime ?? "",
@@ -632,6 +720,8 @@ class UserAdminService {
       departmentName: relations.departmentName ?? null,
       positionName: relations.positionName ?? null,
       managerName: relations.managerName ?? null,
+      contractName: relations.contractName ?? null,
+      placementName: relations.placementName ?? null,
     };
   }
 }

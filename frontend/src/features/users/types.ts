@@ -12,6 +12,10 @@ export interface UserListItem {
   departmentId?: string | null;
   positionId?: string | null;
   managerId?: string | null;
+  // NEW UPDATE TAD SIMBIKA: NIP + Kontrak + Penempatan refs + display names.
+  nip?: string;
+  contractTypeId?: string | null;
+  placementId?: string | null;
   // Role relation (join mirror) + human-readable relation names so the table
   // never shows raw ObjectIds.
   roleIds: string[];
@@ -19,4 +23,6 @@ export interface UserListItem {
   departmentName?: string | null;
   positionName?: string | null;
   managerName?: string | null;
+  contractName?: string | null;
+  placementName?: string | null;
 }

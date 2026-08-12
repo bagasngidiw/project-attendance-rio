@@ -29,6 +29,7 @@ export function UsersPage() {
   const [page, setPage] = useState(1);
   const [showCreate, setShowCreate] = useState(false);
   const [editing, setEditing] = useState<UserListItem | null>(null);
+  const [viewing, setViewing] = useState<UserListItem | null>(null);
   const [deactivating, setDeactivating] = useState<UserListItem | null>(null);
   const [resetting, setResetting] = useState<UserListItem | null>(null);
 
@@ -121,11 +122,9 @@ export function UsersPage() {
               <thead className="bg-slate-50 text-left text-xs uppercase text-slate-500">
                 <tr>
                   <th className="px-4 py-3">Nama</th>
+                  <th className="px-4 py-3">NIP</th>
                   <th className="px-4 py-3">Nama pengguna</th>
                   <th className="px-4 py-3">Email</th>
-                  <th className="px-4 py-3">Departemen</th>
-                  <th className="px-4 py-3">Jabatan</th>
-                  <th className="px-4 py-3">Manajer</th>
                   <th className="px-4 py-3">Status</th>
                   <th className="px-4 py-3">Peran</th>
                   <th className="px-4 py-3 text-right">Aksi</th>
@@ -135,17 +134,9 @@ export function UsersPage() {
                 {items.map((user) => (
                   <tr key={user.id} className="hover:bg-slate-50">
                     <td className="px-4 py-3 font-medium">{user.name}</td>
+                    <td className="px-4 py-3 font-mono text-xs text-slate-600">{user.nip || "—"}</td>
                     <td className="px-4 py-3 font-mono text-xs">{user.username}</td>
                     <td className="px-4 py-3 text-slate-600">{user.email}</td>
-                    <td className="px-4 py-3 text-slate-600">
-                      {user.departmentName ?? "—"}
-                    </td>
-                    <td className="px-4 py-3 text-slate-600">
-                      {user.positionName ?? "—"}
-                    </td>
-                    <td className="px-4 py-3 text-slate-600">
-                      {user.managerName ?? "—"}
-                    </td>
                     <td className="px-4 py-3">
                       <StatusBadge status={user.status} mustChange={user.mustChangePassword} />
                     </td>
@@ -163,6 +154,11 @@ export function UsersPage() {
                     </td>
                     <td className="px-4 py-3">
                       <div className="flex items-center justify-end gap-1.5">
+                        <Can permission={PERMISSIONS.USERS_VIEW}>
+                          <Button size="sm" variant="secondary" onClick={() => setViewing(user)}>
+                            Lihat
+                          </Button>
+                        </Can>
                         <Can permission={PERMISSIONS.USERS_EDIT}>
                           <Button size="sm" variant="secondary" onClick={() => setEditing(user)}>
                             Edit
@@ -241,6 +237,9 @@ export function UsersPage() {
       ) : null}
       {editing ? (
         <EditUserDialog user={editing} onClose={() => setEditing(null)} onSaved={() => { setEditing(null); refetch(); }} />
+      ) : null}
+      {viewing ? (
+        <EditUserDialog user={viewing} readOnly onClose={() => setViewing(null)} onSaved={() => setViewing(null)} />
       ) : null}
       {deactivating ? (
         <DeactivateConfirmDialog user={deactivating} onClose={() => setDeactivating(null)} onSaved={() => { setDeactivating(null); refetch(); }} />

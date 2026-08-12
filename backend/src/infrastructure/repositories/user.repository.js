@@ -28,6 +28,9 @@ class UserRepository {
     departmentId,
     positionId,
     managerId,
+    nip = "",
+    contractTypeId,
+    placementId,
   }) {
     const existing = await UserModel.findOne({
       $or: [
@@ -52,6 +55,9 @@ class UserRepository {
       departmentId: departmentId ?? null,
       positionId: positionId ?? null,
       managerId: managerId ?? null,
+      nip,
+      contractTypeId: contractTypeId ?? null,
+      placementId: placementId ?? null,
     });
   }
 
@@ -141,9 +147,9 @@ class UserRepository {
    * enforced against other users.
    *
    * @param {string} id
-   * @param {{ name?: string, email?: string, departmentId?: string|null, positionId?: string|null, managerId?: string|null }} fields
+   * @param {{ name?: string, email?: string, departmentId?: string|null, positionId?: string|null, managerId?: string|null, nip?: string, contractTypeId?: string|null, placementId?: string|null }} fields
    */
-  async update(id, { name, email, departmentId, positionId, managerId } = {}) {
+  async update(id, { name, email, departmentId, positionId, managerId, nip, contractTypeId, placementId } = {}) {
     const user = await this.assertExists(id);
 
     if (email !== undefined && email !== "") {
@@ -164,6 +170,9 @@ class UserRepository {
     if (departmentId !== undefined) user.departmentId = departmentId || null;
     if (positionId !== undefined) user.positionId = positionId || null;
     if (managerId !== undefined) user.managerId = managerId || null;
+    if (nip !== undefined) user.nip = String(nip ?? "").trim();
+    if (contractTypeId !== undefined) user.contractTypeId = contractTypeId || null;
+    if (placementId !== undefined) user.placementId = placementId || null;
 
     await user.save();
     return user;

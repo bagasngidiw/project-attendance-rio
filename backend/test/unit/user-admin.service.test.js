@@ -47,7 +47,7 @@ function makeService() {
     passwordService,
     auditService,
   });
-  return { service, fakes, passwordHasher, auditService };
+  return { service, fakes, passwordHasher, auditService, passwordService };
 }
 
 const COMPLIANT = "Provision2026!x";
@@ -236,4 +236,178 @@ test("listUsers supports search, status filter, and role filter with pagination"
   const inactive = await service.listUsers({ status: "INACTIVE" });
   assert.equal(inactive.total, 1);
   assert.equal(inactive.items[0].id, a.id === inactive.items[0].id ? a.id : inactive.items[0].id);
+});
+
+// ── NEW UPDATE TAD SIMBIKA: NIP + Kontrak + Penempatan ───────────────────────
+
+const { ContractTypeService } = require("../../src/application/contract-type.service");
+const { PlacementService } = require("../../src/application/placement.service");
+
+/** Minimal in-memory master-data repo matching ContractTypeRepository shape. */
+class FakeMasterRepo {
+  constructor() {
+    this.rows = new Map();
+    this.nextId = 1;
+  }
+  async create(input) {
+    const id = `m_${this.nextId++}`;
+    const row = {
+      id,
+      key: String(input.key).toUpperCase(),
+      name: input.name,
+      description: input.description ?? "",
+      status: input.status ?? "ACTIVE",
+    };
+    this.rows.set(id, row);
+    return row;
+  }
+  async getById(id) {
+    return this.rows.get(String(id)) ?? null;
+  }
+  async findByKey(key) {
+    for (const row of this.rows.values()) if (row.key === String(key).toUpperCase()) return row;
+    return null;
+  }
+  async listActive() {
+    return [...this.rows.values()].filter((r) => r.status === "ACTIVE");
+  }
+}
+
+function makeServiceWithMasters() {
+  const base = makeService();
+  const contractRepo = new FakeMasterRepo();
+  const placementRepo = new FakeMasterRepo();
+  const contractTypeService = new ContractTypeService({
+    contractTypeRepository: contractRepo,
+    auditService: base.auditService,
+  });
+  const placementService = new PlacementService({
+    placementRepository: placementRepo,
+    auditService: base.auditService,
+  });
+  const service = new UserAdminService({
+    userRepository: base.fakes.userRepository,
+    roleRepository: base.fakes.roleRepository,
+    userRoleRepository: base.fakes.userRoleRepository,
+    passwordHasher: base.passwordHasher,
+    passwordService: base.passwordService,
+    auditService: base.auditService,
+    contractTypeService,
+    placementService,
+  });
+  return { ...base, service, contractRepo, placementRepo };
+}
+
+test("createUser persists nip/contractTypeId/placementId and populates names", async () => {
+  const { service, fakes, contractRepo, placementRepo } = makeServiceWithMasters();
+  fakes.roleRepository.seed({ id: "r_emp", key: "EMPLOYEE", name: "Employee", status: "ACTIVE" });
+  const contract = await contractRepo.create({ key: "KONTRAK_TETAP", name: "Kontrak Tetap" });
+  const placement = await placementRepo.create({ key: "KANTOR_PUSAT", name: "Kantor Pusat" });
+
+  const dto = await service.createUser(
+    {
+      username: "tad",
+      email: "tad@corp.io",
+      name: "Tad Employee",
+      roleIds: ["r_emp"],
+      initialPassword: COMPLIANT,
+      nip: "742100590SIM",
+      contractTypeId: contract.id,
+      placementId: placement.id,
+    },
+    { actorId: "u_admin" }
+  );
+
+  assert.equal(dto.nip, "742100590SIM");
+  assert.equal(dto.contractTypeId, contract.id);
+  assert.equal(dto.placementId, placement.id);
+  assert.equal(dto.contractName, "Kontrak Tetap");
+  assert.equal(dto.placementName, "Kantor Pusat");
+
+  const stored = fakes.userRepository.users.get(dto.id);
+  assert.equal(stored.nip, "742100590SIM");
+  assert.equal(String(stored.contractTypeId), contract.id);
+  assert.equal(String(stored.placementId), placement.id);
+});
+
+test("createUser rejects an INACTIVE contract type with MASTER_INACTIVE", async () => {
+  const { service, fakes, contractRepo } = makeServiceWithMasters();
+  fakes.roleRepository.seed({ id: "r_emp", key: "EMPLOYEE", name: "Employee", status: "ACTIVE" });
+  const contract = await contractRepo.create({ key: "INACTIVE_CONTRACT", name: "Old", status: "INACTIVE" });
+
+  await assert.rejects(
+    service.createUser(
+      {
+        username: "badref",
+        email: "badref@corp.io",
+        name: "Bad Ref",
+        roleIds: ["r_emp"],
+        initialPassword: COMPLIANT,
+        contractTypeId: contract.id,
+      },
+      { actorId: "u_admin" }
+    ),
+    (err) => err instanceof ConflictError && err.code === "MASTER_INACTIVE"
+  );
+});
+
+test("createUser rejects a missing placement reference with MASTER_INACTIVE", async () => {
+  const { service, fakes } = makeServiceWithMasters();
+  fakes.roleRepository.seed({ id: "r_emp", key: "EMPLOYEE", name: "Employee", status: "ACTIVE" });
+
+  await assert.rejects(
+    service.createUser(
+      {
+        username: "missingref",
+        email: "missingref@corp.io",
+        name: "Missing Ref",
+        roleIds: ["r_emp"],
+        initialPassword: COMPLIANT,
+        placementId: "does-not-exist",
+      },
+      { actorId: "u_admin" }
+    ),
+    (err) => err instanceof ConflictError && err.code === "MASTER_INACTIVE"
+  );
+});
+
+test("updateUser updates nip/contractTypeId/placementId and audits before/after", async () => {
+  const { service, fakes, contractRepo, placementRepo } = makeServiceWithMasters();
+  fakes.roleRepository.seed({ id: "r_emp", key: "EMPLOYEE", name: "Employee", status: "ACTIVE" });
+  const created = await service.createUser(
+    { username: "editmasters", email: "editmasters@corp.io", name: "Edit Masters", roleIds: ["r_emp"], initialPassword: COMPLIANT },
+    { actorId: "u_admin" }
+  );
+  const contract = await contractRepo.create({ key: "KONTRAK_KONTRAK", name: "Kontrak" });
+  const placement = await placementRepo.create({ key: "LAPANGAN", name: "Lapangan" });
+
+  const updated = await service.updateUser(
+    created.id,
+    { nip: "12345", contractTypeId: contract.id, placementId: placement.id },
+    { actorId: "u_admin" }
+  );
+
+  assert.equal(updated.nip, "12345");
+  assert.equal(updated.contractTypeId, contract.id);
+  assert.equal(updated.placementId, placement.id);
+  assert.equal(updated.contractName, "Kontrak");
+  assert.equal(updated.placementName, "Lapangan");
+
+  const auditEvent = fakes.auditRepository.entries.find((e) => e.action === "USER.UPDATED");
+  assert.ok(auditEvent, "USER.UPDATED audit event recorded");
+  assert.equal(auditEvent.metadata.before.nip, "");
+  assert.equal(auditEvent.metadata.after.nip, "12345");
+  assert.equal(auditEvent.metadata.after.contractTypeId, contract.id);
+});
+
+test("legacy users without new fields still serialize (nip '', refs null)", async () => {
+  const { service, fakes } = makeService();
+  fakes.roleRepository.seed({ id: "r_emp", key: "EMPLOYEE", name: "Employee", status: "ACTIVE" });
+  const created = await service.createUser(
+    { username: "legacy", email: "legacy@corp.io", name: "Legacy", roleIds: ["r_emp"], initialPassword: COMPLIANT },
+    {}
+  );
+  assert.equal(created.nip, "");
+  assert.equal(created.contractTypeId, null);
+  assert.equal(created.placementId, null);
 });

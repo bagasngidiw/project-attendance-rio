@@ -3,12 +3,7 @@
 > Prepared by the Senior Designer per `DESIGNER.md`. This document is the implementation contract for the Developer Agent.
 >
 > **Issue**: User request (from `.opencode/prompts/DESIGNER.md` §USER REQUEST FORMAT):
-> *Frontend is live on Vercel, backend is behind the ngrok tunnel `https://walk-sycamore-sublevel.ngrok-free.dev` (connected via Vercel rewrites). The app logo `<img src>` returns a relative path (`/api/v1/platform/branding-assets/logo-*.png`) that does not render on live Vercel. The user asks: should the ngrok URL be prepended to asset/attachment URLs so the logo and all employee attachments (izin/sakit/cuti/perjalanan dinas detail popups, approval inbox, approval history) are visible? They need it working to present tomorrow.*
->
-> **Short answer to the user's question — prepending the ngrok URL is NOT the correct fix.** Verified from source:
-> - The ngrok tunnel URL is **ephemeral** (changes every tunnel restart) and hardcoding it into source/URLs breaks after the next restart.
-> - A browser `<img src>` / `<a href>` request **cannot send the `ngrok-skip-browser-warning` header** that the axios client already carries (`frontend/src/lib/axios.ts:162`). Directly hitting ngrok from the browser without that header returns ngrok's HTML interstitial instead of the image/file.
-> - The correct, robust fix is to load the logo through the **existing axios client as a blob + object URL** (the exact pattern already proven for attachments in `RequestAttachments.tsx`), keeping all URLs relative and letting the existing Vercel rewrite `/api/:path*` → ngrok do the routing.
+> *"Baca `ai-project-context/NEW UPDATE TAD SIMBIKA.xlsx`. Aplikasi sudah live; tidak ingin menambahkan fitur besar, tapi karena klien butuh data seperti di Excel (NIP, JABATAN, PENEMPATAN, NAMA KONTRAK), tambahkan 2 master data baru — KONTRAK dan PENEMPATAN (string, di menu Master Data bersama Tipe Cuti/Tipe Sakit, bisa dinonaktifkan). Di menu Pengguna: hapus form departemen+jabatan dan kolom departemen/jabatan/manajer di list; tambahkan pilihan Kontrak+Penempatan (dari database, disimpan sebagai ObjectId yang di-populate) dan field NIP (string) di form baru/edit; tambahkan aksi Lihat (komponen sama dengan Edit, tanpa tombol Simpan, menampilkan NIP/Kontrak/Penempatan). End-to-end backend→frontend→UI, testing aman, akan dipresentasikan hari ini."*
 
 ---
 
@@ -16,35 +11,62 @@
 
 ### User Request
 
-1. Make the application logo render on the live Vercel origin (backend on ngrok).
-2. Make every employee attachment (izin / sakit / cuti / perjalanan dinas detail popups) and approval surfaces (kotak masuk persetujuan, riwayat persetujuan / drill-down) work on live Vercel.
-3. The user proposed prepending `https://walk-sycamore-sublevel.ngrok-free.dev` to each asset/attachment URL — **evaluate and implement the safe alternative**.
+1. **Master Data baru: KONTRAK + PENEMPATAN** — string data, di menu Master Data (sama seperti Tipe Cuti / Tipe Sakit), mendukung nonaktifkan (ACTIVE/INACTIVE).
+2. **Menu Pengguna (list)**: hapus kolom **Departemen, Jabatan, Manajer**.
+3. **Form Pengguna Baru**: hapus field Departemen + Jabatan; tambah pilihan **Kontrak + Penempatan** (data dari database, **ObjectId**, di-populate) dan field **NIP** (string).
+4. **Form Edit Pengguna**: tambah pilihan Kontrak + Penempatan dan field NIP.
+5. **Aksi "Lihat"** di list pengguna: komponen yang sama dengan Edit, **tanpa tombol Simpan**, menampilkan hal yang sama dengan Detail (termasuk NIP, Kontrak, Penempatan).
+6. End-to-end, tested, **dipresentasikan hari ini**.
 
-### Problem (verified from source)
+### Verified Facts (from the Excel)
 
-1. **Logo**: backend returns a **relative URL** `url: /api/v1/platform/branding-assets/${key}` (`backend/src/application/branding.service.js:143`). The frontend stores it verbatim as `logoUrl` (`frontend/src/lib/branding.ts:121`) and renders it in `<img src>` in `Navbar.tsx:54`, `SidebarLogo.tsx:14`, `Login/index.tsx:169`, `ThemePreview.tsx:26`, `BrandingSettingsPanel.tsx:167`. On Vercel the browser requests `/api/v1/platform/branding-assets/...` → Vercel rewrite → ngrok. Failure modes:
-   - **(a)** ngrok serves its HTML interstitial for browser-like requests without `ngrok-skip-browser-warning`; an `<img>` request cannot set that header → broken image (most likely current cause; the user already needed the header for axios calls).
-   - **(b)** If the deployed Vercel build predates the correct `frontend/vercel.json` (it was previously at `frontend/src/vercel.json`), `/api/...` falls through to the SPA fallback `/(.*)` → `/index.html` → HTML returned for the image path.
-2. **Attachments**: `RequestAttachments.tsx` (used by `RequestDetailDialog.tsx:66` and approval `RequestDrillDownDialog.tsx:125`) already downloads via `attachmentApi.download(id)` → axios `responseType: "blob"` → object URL → programmatic download. Attendance selfies use the same blob pattern (`attendanceApi.getMedia`). **No raw `<a href>` / `window.open` / URL rendering exists anywhere** (verified by repo-wide grep). Attachments therefore already traverse the header-carrying axios client and need **no code change** — only deployment verification.
+`NEW UPDATE TAD SIMBIKA.xlsx` → sheet `PEGAWAI`, 74 baris: `NAMA KONTRAK` (4 nilai), `NIP` (unik, alfanumerik, contoh `742100590SIM`), `NAMA PEGAWAI`, `JABATAN` (semua `PENGEMUDI`), `PENEMPATAN` (10 nilai). Data inilah yang nantinya diisi ke master data + user, tapi **import massal Excel ke user TIDAK termasuk scope request ini** (hanya master data + form user + aksi Lihat).
+
+### Verified Facts (from the codebase)
+
+**Pola master data (Tipe Sakit — dipakai sebagai acuan):**
+- `backend/src/infrastructure/models/sickness-type.model.js` — `key` (unique uppercase), `name`, `description`, `status` (ACTIVE/INACTIVE/PENDING), `isSystem`, `suggestedBy`, `updatedBy`, timestamps.
+- `backend/src/domain/sickness-type.js` — enum status + `validateSicknessTypeInput` + `isActiveSicknessType`.
+- `backend/src/infrastructure/repositories/sickness-type.repository.js` — findByKey/findById/getById/create/update/setStatus/list/listActive.
+- `backend/src/application/sickness-type.service.js` — listActive/list/create/update/activate/deactivate/isActiveType/findById/toDto.
+- `backend/src/presentation/routes/sakit.routes.js` — `createSicknessTypeRoutes` (GET / aktif + POST /suggest) + `createSicknessTypeAdminRoutes` (GET /, POST /, PUT /:id, POST /:id/activate, POST /:id/deactivate; semua `platform:settings`).
+- Mount: `server.js:614-615` → `/api/v1/sickness-types` + `/api/v1/admin/sickness-types`.
+- Frontend: `sicknessTypeApi` + `sicknessTypeAdminApi` di `frontend/src/lib/axios.ts`; `MasterDataPage.tsx` (tab Tipe Cuti/Tipe Sakit) → `MasterDataPanel.tsx` (panel reusable: buat + aktif/nonaktif).
+
+**Fitur Pengguna:**
+- `backend/src/infrastructure/models/user.model.js` — **tidak ada** `nip` / `contractTypeId` / `placementId`; punya `departmentId`/`positionId`/`managerId` (DIPERTAHANKAN di model/API — hanya dihapus dari form/kolom UI).
+- `backend/src/presentation/dto/user.dto.js` — `createUserDto` + `updateUserDto` (perlu ditambah `nip`, `contractTypeId`, `placementId`).
+- `backend/src/application/user-admin.service.js` — `createUser` (validasi org refs via `assertActiveOrgRefs`), `updateUser` (before/after audit), `listUsers`, `getUser`, `toUserDto`, `enrichRoleKeys` + `loadRelationNames` (batch resolve departmentName/positionName/managerName — pola untuk populate nama kontrak/penempatan).
+- `backend/src/presentation/controllers/user.controller.js` + `backend/src/presentation/routes/user.routes.js` — controller/routes yang sudah ada; hanya DTO + service yang berubah.
+- Frontend: `features/users/UsersPage.tsx` (kolom Nama/Nama pengguna/Email/**Departemen**/**Jabatan**/**Manajer**/Status/Peran/Aksi; aksi Edit/Nonaktifkan/Reset/Aktifkan), `CreateUserDialog.tsx` (punya DepartmentSelect/PositionSelect dari `features/org/OrgPicker.tsx`), `EditUserDialog.tsx` (name/email + jatah cuti + jadwal; **tidak ada** departemen/jabatan), `features/users/types.ts` (`UserListItem`).
+- `features/org/OrgPicker.tsx` — pola `<select>` untuk pilihan aktif (acuan untuk ContractSelect/PlacementSelect baru).
+
+### Problem
+
+- Master data KONTRAK/PENEMPATAN belum ada (model/service/route/UI).
+- User tidak punya field `nip`, `contractTypeId`, `placementId`; DTO/service tidak menerimanya; DTO tidak meng-populate nama.
+- UI user masih menampilkan Departemen/Jabatan/Manajer dan belum ada Kontrak/Penempatan/NIP, belum ada aksi Lihat.
 
 ### Expected Result
 
-- The logo renders on the live Vercel origin with the backend on ngrok.
-- Attachment downloads (detail popups + approval inbox/history drill-down) work on live Vercel.
-- No ngrok URL is hardcoded anywhere in source.
-- Backend code is **unchanged** (relative URLs preserved).
+- Master data KONTRAK + PENEMPATAN lengkap (backend + UI tab Master Data), bisa dibuat/dinonaktifkan/aktifkan ulang, diaudit.
+- Form Pengguna Baru: tanpa Departemen/Jabatan; dengan NIP (string) + pilihan Kontrak/Penempatan (aktif, dari DB).
+- Form Edit Pengguna: NIP + Kontrak/Penempatan (terisi nilai saat ini).
+- List Pengguna: tanpa kolom Departemen/Jabatan/Manajer; ada aksi **Lihat** (read-only, komponen sama dengan Edit, tanpa Simpan).
+- Backend menyimpan `nip` (string), `contractTypeId`/`placementId` (ObjectId), dan DTO mengembalikan `contractName`/`placementName` (populate/relation-name).
+- Tidak ada regresi: org/reporting/team tetap jalan; user lama tidak terdampak.
 
 ### Issue Classification
 
-Bug Fix (production asset/attachment loading across Vercel ↔ ngrok) — frontend + deployment configuration only.
+New Feature (master data + penyesuaian user admin) — full-stack, end-to-end.
 
 ### Scope
 
-- **Frontend (code)**: `frontend/src/lib/axios.ts`, `frontend/src/lib/branding.ts`, `frontend/src/features/branding/BrandingSettingsPanel.tsx`, `frontend/src/features/branding/ThemePreview.tsx` (logo loading path only).
-- **Frontend (config)**: optional use of the already-defined `VITE_API_URL` env var (`frontend/.env`) as a production axios baseURL override.
-- **Deployment (operational, no repo change needed)**: confirm `frontend/vercel.json` is at the Vercel project root and redeploy.
-- **Backend**: **NO changes** (verified correct).
-- **Database / API / RBAC / Navigation**: **NO changes**.
+- **Backend baru**: master data KONTRAK (`contract_type` collection) + PENEMPATAN (`placement` collection): model, domain, repository, service, controller, DTO, routes, wiring `server.js`.
+- **Backend ubah**: `user.model.js` (+`nip`, +`contractTypeId`, +`placementId`), `user.dto.js`, `user-admin.service.js` (validasi active ref, persist, audit, toUserDto + nama), (opsional) `user.controller.js` hanya jika perlu.
+- **Frontend baru**: `features/admin/MasterSelects.tsx` (ContractTypeSelect/PlacementSelect), API clients baru di `axios.ts`, tab Master Data, `UserViewDialog` (atau prop readOnly di EditUserDialog).
+- **Frontend ubah**: `MasterDataPage.tsx`, `UsersPage.tsx`, `CreateUserDialog.tsx`, `EditUserDialog.tsx`, `QuotaAndScheduleSection.tsx` (prop `disabled`), `features/users/types.ts`, `contracts/*` types.
+- **TIDAK diubah**: `departmentId`/`positionId`/`managerId` di model & API (tetap dipakai org/reporting/team); auth/RBAC; navigasi; approval; absensi.
 
 ---
 
@@ -52,43 +74,52 @@ Bug Fix (production asset/attachment loading across Vercel ↔ ngrok) — fronte
 
 ### Relevant Frontend
 
-- `frontend/src/lib/axios.ts` — single shared `api` instance (`baseURL: "/api/v1"`), `ngrok-skip-browser-warning: true` header (line 162), `attachmentApi.download` blob path (line 608-613), `attachmentApi.downloadUrl` (line 606, unused), `brandingApi.public()` (line 367).
-- `frontend/src/lib/branding.ts` — module store; `applyIdentity` (106-124) stores `logoUrl = identity.logo?.url`; `bootstrapBranding()` (137-147) runs before React; `useBranding()` (150-152).
-- `frontend/src/main.tsx:8` — `bootstrapBranding()` fire-and-forget.
-- `<img src={logoUrl}>` consumers: `frontend/src/components/layout/navbar/Navbar.tsx` (52-54), `frontend/src/components/layout/sidebar/SidebarLogo.tsx` (12-14), `frontend/src/pages/Login/index.tsx` (167-169), `frontend/src/features/branding/ThemePreview.tsx` (25-26).
-- `frontend/src/features/branding/BrandingSettingsPanel.tsx` — uses `active.logo.url` directly (165-167) and passes it to `ThemePreview` (230).
-- `frontend/src/features/requests/RequestAttachments.tsx` — blob download (verified).
-- `frontend/src/features/requests/RequestDetailDialog.tsx:66`, `frontend/src/features/approvals/RequestDrillDownDialog.tsx:125` — render `<RequestAttachments>`.
-- `frontend/vercel.json` — rewrites `/api/:path*` → ngrok, `/(.*)` → index.html.
-- `frontend/.env` — defines `VITE_API_URL=http://localhost:5000` (currently unused by any code).
+- `frontend/src/lib/axios.ts` — `sicknessTypeApi`/`sicknessTypeAdminApi` (acuan), `usersApi` (`create`/`update` payload).
+- `frontend/src/features/admin/MasterDataPage.tsx` — tab master data; perlu +2 tab.
+- `frontend/src/features/admin/MasterDataPanel.tsx` — panel reusable (buat + toggle status).
+- `frontend/src/features/users/UsersPage.tsx` — list + aksi; perlu hapus 3 kolom + aksi Lihat.
+- `frontend/src/features/users/CreateUserDialog.tsx` — hapus dept/jabatan; tambah NIP + Kontrak + Penempatan.
+- `frontend/src/features/users/EditUserDialog.tsx` — tambah NIP + Kontrak + Penempatan; dukung readOnly (Lihat).
+- `frontend/src/features/users/QuotaAndScheduleSection.tsx` — perlu prop `disabled` untuk mode Lihat.
+- `frontend/src/features/users/types.ts` — `UserListItem` perlu field baru.
+- `frontend/src/features/org/OrgPicker.tsx` — pola select aktif.
+- `contracts/` — perlu tipe `ContractTypeDto` / `PlacementDto` (+ response wrappers).
 
 ### Relevant Backend
 
-- `backend/src/application/branding.service.js:143` — builds relative logo `url`.
-- `backend/src/presentation/routes/branding.routes.js:32-36` — public asset route `GET /:token` under `/api/v1/platform/branding-assets` (no auth).
-- `backend/src/presentation/controllers/branding.controller.js:60-73` — `getAsset` serves the stored file (nosniff, CSP for SVG, cache 86400).
-- `backend/src/presentation/controllers/attachment.controller.js:55-71` — `GET /attachments/:id/download` (auth `files:download`).
-- `backend/src/presentation/routes/attachment.routes.js:36-40` — attachment download route.
-- `backend/server.js:577-578` — mounts branding asset + public branding routes.
+- `backend/src/infrastructure/models/sickness-type.model.js` (acuan model master data).
+- `backend/src/infrastructure/models/user.model.js` (tambah 3 field).
+- `backend/src/domain/sickness-type.js` (acuan domain master data).
+- `backend/src/infrastructure/repositories/sickness-type.repository.js` (acuan repository master data).
+- `backend/src/application/sickness-type.service.js` (acuan service master data).
+- `backend/src/application/user-admin.service.js` (createUser/updateUser/toUserDto/enrich).
+- `backend/src/presentation/controllers/sickness-type.controller.js` (acuan controller admin).
+- `backend/src/presentation/routes/sakit.routes.js` (acuan route admin + aktif).
+- `backend/src/presentation/dto/user.dto.js` (tambah field).
+- `backend/src/presentation/dto/sakit.dto.js` (acuan DTO master data).
+- `backend/server.js` (composition root: wire repos/services/controllers/routes).
 
 ### Relevant Database
 
-- Not affected. Logo storage keys are plain filenames under `backend/branding-assets/` (local disk, served by the tunneled backend).
+- `users` collection: tambah `nip` (String), `contractTypeId` (ObjectId ref `contract_types`), `placementId` (ObjectId ref `placements`).
+- Collection baru: `contract_types`, `placements` (dibuat otomatis oleh Mongoose saat create pertama).
+- Tidak ada migrasi data (field baru default kosong/null).
 
 ### Relevant API
 
-- `GET /api/v1/platform/branding` (public) → returns `logo.url` (relative). **Keep relative.**
-- `GET /api/v1/platform/branding-assets/:token` (public) — asset bytes.
-- `GET /api/v1/attachments/:id/download` (authenticated) — attachment bytes.
-- No endpoint changes required.
+- Baru: `GET/POST/PUT/:id, POST /:id/activate, POST /:id/deactivate` untuk `/api/v1/admin/contract-types` dan `/api/v1/admin/placements` (guard `platform:settings`); `GET /api/v1/contract-types` dan `GET /api/v1/placements` (aktif, authenticated).
+- Ubah: `POST /api/v1/users` dan `PUT /api/v1/users/:id` — payload + response menambah `nip`, `contractTypeId`, `placementId`, `contractName`, `placementName`.
 
 ### Relevant Authentication / Authorization / RBAC
 
-- Not affected. Public branding asset route stays public; attachment download stays `files:download`-guarded; axios blob requests carry the Bearer token.
+- Admin master data: reuse permission `platform:settings` (sama dengan tipe sakit/cuti).
+- Daftar aktif untuk form user: authenticated only (sama dengan `/sickness-types`).
+- Aksi Lihat user: reuse `users:view` (sudah di-route); verifikasi `PERMISSIONS.USERS_VIEW` ada di `contracts/permissions.ts`.
+- Tidak ada permission/role baru.
 
 ### Relevant Navigation
 
-- Not affected.
+- Tidak ada perubahan menu (Master Data sudah ada di sidebar; tab ditambah di dalam halaman).
 
 ---
 
@@ -96,313 +127,404 @@ Bug Fix (production asset/attachment loading across Vercel ↔ ngrok) — fronte
 
 | Area | Status | Impact |
 |------|--------|--------|
-| Frontend | **Affected** | Logo loading path (`lib/branding.ts`, `lib/axios.ts`, `BrandingSettingsPanel`, `ThemePreview`); optional env base URL |
-| Backend | Not Affected | No code change; relative URLs stay as-is |
-| Database | Not Affected | No schema/data change |
-| API | Not Affected | No endpoint/contract change |
-| Authentication | Not Affected | Token/session flows untouched |
-| Authorization / RBAC | Not Affected | Permission keys untouched |
-| Navigation | Not Affected | Sidebar/menu untouched |
-| Storage | Not Affected | Still local disk behind ngrok |
-| Deployment/Infrastructure | **Affected** | `frontend/vercel.json` placement + Vercel redeploy; optional `VITE_API_URL` |
+| Frontend | **Affected** | Master data tab baru; form user (NIP/Kontrak/Penempatan); list user (hapus 3 kolom + aksi Lihat) |
+| Backend | **Affected** | Master data baru (2 entitas) + user model/DTO/service |
+| Database | **Affected (additive)** | 2 collection baru + 3 field baru di `users`; tanpa migrasi |
+| API | **Affected** | Endpoint master data baru; payload/response user bertambah field |
+| Authentication | Not Affected | Tidak ada perubahan alur login/token |
+| Authorization / RBAC | Not Affected | Reuse `platform:settings` + `users:view`; tidak ada permission baru |
+| Navigation | Not Affected | Menu tetap; hanya tab dalam halaman Master Data |
+| Storage | Not Affected | — |
+| Reports / Dashboard / Approval / Notifications | Not Affected | Field baru tidak dipakai modul lain |
 
 ---
 
 ## Functional Requirements
 
-### FR-001: Load the branding logo via axios blob + object URL
+### FR-001: Master data KONTRAK — backend lengkap
 
-**Type:** Bug Fix / Frontend
+**Type:** Backend / Database / API
 
 **Priority:** High
 
-**Status:** Implemented — verified
+**Status:** Proposed
 
 - [x] Implement requirement
 
 **Description:**
-Replace the raw `<img src="/api/v1/platform/branding-assets/...">` rendering path with a blob fetch through the existing `api` instance (which already sends `ngrok-skip-browser-warning`) and expose a `URL.createObjectURL(...)` as `logoUrl`. This works on Vercel because the request is routed by the existing Vercel rewrite, and it carries the header ngrok requires. No ngrok URL is hardcoded.
+Buat entitas master data KONTRAK mengikuti pola Tipe Sakit (tanpa alur PENDING/"Tambahkan sendiri"). Status hanya `ACTIVE`/`INACTIVE` (bisa dinonaktifkan). Data string: `name` (+`key`, `description` agar selaras dengan MasterDataPanel).
 
 **Current Behavior:**
-`applyIdentity` stores the backend-relative path (`/api/v1/platform/branding-assets/logo-*.png`) as `logoUrl`; every `<img src>` makes a browser request that cannot set `ngrok-skip-browser-warning`, so on Vercel → ngrok the logo fails (interstitial or SPA fallback HTML).
+Tidak ada entitas/endpoint KONTRAK.
 
 **Expected Behavior:**
-`logoUrl` is an object URL created from a blob fetched via `api` (header present). The logo renders in the Navbar, Sidebar, Login page, ThemePreview, and BrandingSettingsPanel on the live Vercel origin. Local dev keeps working via the Vite proxy.
+CRUD + aktif/nonaktif via admin (`platform:settings`); daftar aktif untuk form user; audit `SETTINGS.CHANGED`.
 
-**Affected Files:**
-- `frontend/src/lib/axios.ts` (add reusable blob helper; keep `api` config)
-- `frontend/src/lib/branding.ts` (`applyIdentity` / `applyBranding` / `bootstrapBranding` — resolve logo to object URL)
-- `frontend/src/components/layout/navbar/Navbar.tsx` (verify only — reads `useBranding().logoUrl`)
-- `frontend/src/components/layout/sidebar/SidebarLogo.tsx` (verify only)
-- `frontend/src/pages/Login/index.tsx` (verify only)
-- `frontend/src/main.tsx` (verify `bootstrapBranding()` stays non-blocking)
+**Affected Files (semua baru, kecuali server.js):**
+- `backend/src/infrastructure/models/contract-type.model.js` (collection `contract_types`)
+- `backend/src/domain/contract-type.js`
+- `backend/src/infrastructure/repositories/contract-type.repository.js`
+- `backend/src/application/contract-type.service.js`
+- `backend/src/presentation/controllers/contract-type.controller.js`
+- `backend/src/presentation/routes/contract-type.routes.js`
+- `backend/src/presentation/dto/contract-type.dto.js`
+- `backend/server.js` (wiring + mount)
 
 **Implementation Instructions:**
-1. In `frontend/src/lib/axios.ts`, add an exported helper (keep it next to `attachmentApi`):
-   - `fetchBlobObjectUrl(relativePath: string): Promise<string>` → `const res = await api.get(relativePath, { responseType: "blob" }); return URL.createObjectURL(res.data as Blob);`
-   - Reuse it later for any surface that needs an inline file (logo preview, etc.).
-2. In `frontend/src/lib/branding.ts`:
-   - In `applyIdentity` (or the calling `applyBranding`), when `identity.logo?.url` is present and starts with `/api/v1`, call `fetchBlobObjectUrl(identity.logo.url)`; store the **object URL** in `state.logoUrl`.
-   - On failure (reject), fall back to the original relative `logo.url` string (behavior identical to today) — never throw out of the bootstrap.
-   - Track the previous object URL and `URL.revokeObjectURL(previous)` when replacing it (memory hygiene when the logo changes).
-   - Keep `applyIdentity`'s non-logo behavior synchronous; only the logo resolution is async.
-3. Ensure `bootstrapBranding()` remains fire-and-forget (already `.then(...).catch(...)`); do not block `main.tsx` render.
-4. Do NOT change the consumers (`Navbar`, `SidebarLogo`, `Login`) — they already read `logoUrl` from `useBranding()`.
+1. **Model** (salin pola `sickness-type.model.js`): `key` (unique, uppercase), `name` (trim, required), `description` (default `""`), `status` enum `["ACTIVE","INACTIVE"]` default `ACTIVE` index, `updatedBy` (ObjectId ref User, default null), timestamps true, versionKey false.
+2. **Domain** (`domain/contract-type.js`): `CONTRACT_TYPE_STATUS` (`ACTIVE`/`INACTIVE`), `validateContractTypeInput({ key, name })` (key uppercase `[A-Z][A-Z0-9_]*`, name min 2), `isActiveContractType(entity)`.
+3. **Repository**: `findByKey`, `getById`, `create`, `update({name,description,updatedBy})`, `setStatus(id,status,updatedBy)`, `list({search,status})`, `listActive()` — salin `sickness-type.repository.js` tanpa logika PENDING/suggestedBy.
+4. **Service** (salin `sickness-type.service.js`, buang suggest/PENDING): `listActive`, `list`, `create` (cek duplikat key → `ConflictError` `CONTRACT_TYPE_EXISTS`), `update`, `activate`, `deactivate`, `isActiveType(id)` (null-safe), `findById(id)` (null-safe), `toDto` (`id,key,name,description,status,updatedAt`). Audit action `SETTINGS.CHANGED` subject type `CONTRACT_TYPE`, metadata `{ changedFields: ["contractType"], kind }`.
+5. **Controller**: `listActive`, `listAdmin`, `create`, `update`, `activate`, `deactivate` (salin pola `sickness-type.controller.js`; actor helper sama).
+6. **Routes** (`contract-type.routes.js`): 
+   - `createContractTypeRoutes` — `router.use(authenticate)`; `GET /` → `listActive` (dipakai form user).
+   - `createContractTypeAdminRoutes` — `router.use(authenticate)` + `router.use(authorize("platform:settings"))`; `GET /` `POST /` `PUT /:id` `POST /:id/activate` `POST /:id/deactivate`, validasi DTO.
+7. **DTO** (`contract-type.dto.js`): `createContractTypeDto` `{ key, name, description? }`, `updateContractTypeDto` `{ name?, description? }` (salin pola `sakit.dto.js` create/update).
+8. **server.js wiring** (pola `sicknessType*`):
+   - `const contractTypeRepository = new ContractTypeRepository();`
+   - `const contractTypeService = new ContractTypeService({ contractTypeRepository, auditService });`
+   - `const contractTypeController = new ContractTypeController({ contractTypeService });`
+   - Mount: `app.use("/api/v1/contract-types", createContractTypeRoutes({ contractTypeController, authenticate, authorize }));`
+   - Mount: `app.use("/api/v1/admin/contract-types", createContractTypeAdminRoutes({ contractTypeController, authenticate, authorize }));`
+   - Tambahkan `contractTypeRepository` ke objek `repositories` yang di-return (agar bisa dipakai seed/test bila perlu).
+9. Audit: setiap mutasi `SETTINGS.CHANGED`; jangan buat permission baru.
 
 **Dependencies:**
-- None (self-contained frontend change).
+- `AuditService` yang sudah ada di `buildApp`.
 
 **Must Preserve:**
-- Backend-relative logo URL format (never change `branding.service.js`).
-- `bootstrapBranding()` anti-flash behavior (defaults first, theme swap async).
-- Local dev behavior via Vite proxy.
-- All other branding identity fields.
+- Pola master data yang sudah ada (tipe sakit/cuti) — tidak mengubahnya.
+- `platform:settings` guard.
 
 **Acceptance Criteria:**
-- [ ] On the live Vercel origin, the logo renders in Navbar, Sidebar, and Login page with the backend on ngrok. *(runtime — requires live Vercel + tunnel; operator check)*
-- [x] In local dev (`npm run dev`), the logo still renders. *(verified: build + lint pass; Vite proxy path unchanged)*
-- [x] No ngrok URL string exists in `frontend/src/**`. *(verified: only `VITE_API_URL` env override, never hardcoded)*
-- [x] Changing/uploading a new logo in the admin panel updates the rendered logo without leaving stale object URLs (no visible memory leak). *(verified: object URL generation guard + revoke in `branding.ts`)*
-- [x] If the tunnel/backend is unreachable, the app still boots with default branding (no crash). *(verified: `resolveLogoObjectUrl` catches and keeps raw URL; bootstrap non-blocking)*
-
-#### Implementation Notes
-
-Implemented in:
-
-- `frontend/src/lib/axios.ts` — added exported `fetchBlobObjectUrl(relativePath)` (blob fetch via the `api` instance which carries `ngrok-skip-browser-warning`).
-- `frontend/src/lib/branding.ts` — `applyIdentity` now upgrades a relative `/api/...` logo URL to an object URL via `fetchBlobObjectUrl`, guarded by a monotonic `identityGeneration` (stale fetches are revoked, never applied); the previous object URL is revoked on replacement/removal; failure falls back to the raw relative URL. `bootstrapBranding()` remains fire-and-forget.
-
-Verified:
-
-- `npm run build` (tsc -b && vite build) passes — no type errors.
-- `npm run lint` passes — no ESLint errors.
+- [ ] `GET /api/v1/admin/contract-types` (token `platform:settings`) → daftar KONTRAK.
+- [ ] `POST /api/v1/admin/contract-types` membuat entri; duplikat key → 409.
+- [ ] `POST /api/v1/admin/contract-types/:id/deactivate` dan `/activate` berfungsi; entri INACTIVE tidak muncul di `GET /api/v1/contract-types` (aktif).
+- [ ] `PUT /api/v1/admin/contract-types/:id` mengubah name/description.
+- [ ] Mutasi tercatat di audit (SETTINGS.CHANGED).
 
 ---
 
-### FR-002: Fix the live logo preview in BrandingSettingsPanel + ThemePreview
+### FR-002: Master data PENEMPATAN — backend lengkap
 
-**Type:** Bug Fix / Frontend
+**Type:** Backend / Database / API
 
 **Priority:** High
 
-**Status:** Implemented — verified
+**Status:** Proposed
 
 - [x] Implement requirement
 
 **Description:**
-The admin branding panel renders `active.logo.url` directly (`BrandingSettingsPanel.tsx:165-167`) and passes it to `ThemePreview` (`:230`), so the preview fails on Vercel for the same reason as FR-001. Route it through the same blob/object-URL helper.
+Identik dengan FR-001 untuk entitas PENEMPATAN (collection `placements`, model `Placement`, subject audit `PLACEMENT`, kode error `PLACEMENT_EXISTS`).
 
 **Current Behavior:**
-`<img src={active.logo.url}>` uses the raw relative backend path → fails on Vercel ↔ ngrok.
+Tidak ada.
 
 **Expected Behavior:**
-The current-logo preview in `BrandingSettingsPanel` and `ThemePreview` renders from an object URL fetched via `api`.
+CRUD + aktif/nonaktif; daftar aktif untuk form user.
 
-**Affected Files:**
-- `frontend/src/features/branding/BrandingSettingsPanel.tsx` (logo preview at 165-167; prop at 230)
-- `frontend/src/features/branding/ThemePreview.tsx` (consumes `logoUrl` prop; verify only)
-- (shared helper from FR-001)
+**Affected Files (baru):**
+- `backend/src/infrastructure/models/placement.model.js`
+- `backend/src/domain/placement.js`
+- `backend/src/infrastructure/repositories/placement.repository.js`
+- `backend/src/application/placement.service.js`
+- `backend/src/presentation/controllers/placement.controller.js`
+- `backend/src/presentation/routes/placement.routes.js`
+- `backend/src/presentation/dto/placement.dto.js`
+- `backend/server.js` (wiring + mount)
 
 **Implementation Instructions:**
-1. In `BrandingSettingsPanel.tsx`, replace direct `<img src={active.logo.url}>` with a resolved object URL:
-   - Add a small effect/local state that calls `fetchBlobObjectUrl(active.logo.url)` when `active.logo?.url` changes and stores the object URL; fall back to the raw URL on failure.
-   - Revoke the previous object URL when replacing.
-2. Pass the resolved object URL (or `null`) as `logoUrl` to `ThemePreview` (line 230).
-3. After a successful upload (`uploadLogo`) or save, invalidate/re-resolve the preview object URL so the new logo shows immediately.
+1. Salin seluruh pola FR-001 dengan nama/domain `Placement`/`placement`.
+2. Mount: `app.use("/api/v1/placements", ...)` dan `app.use("/api/v1/admin/placements", ...)`.
+3. Tambahkan `placementRepository` ke `repositories`.
 
 **Dependencies:**
-- FR-001 (helper).
+- FR-001 (pola yang sama).
 
 **Must Preserve:**
-- Upload flow (`brandingApi.uploadLogo`), remove flow, and the identity save flow.
-- Existing settings form behavior.
+- Idem FR-001.
 
 **Acceptance Criteria:**
-- [ ] In the admin branding panel on live Vercel, the current logo preview renders. *(runtime — requires live Vercel + tunnel; operator check)*
-- [x] Uploading a new logo updates the preview immediately. *(verified: `useAssetObjectUrl(active.logo.url)` re-resolves when the URL changes; fallback `?? active.logo.url`)*
-- [x] No ngrok URL hardcoded. *(verified)*
-
-#### Implementation Notes
-
-Implemented in:
-
-- `frontend/src/lib/branding.ts` — added exported `useAssetObjectUrl(rawUrl)` hook (fetch blob → object URL; revokes on unmount/path change; returns raw URL for non-`/api/` paths; returns `null` while pending/failed so callers fall back to the raw URL).
-- `frontend/src/features/branding/BrandingSettingsPanel.tsx` — `const previewLogoUrl = useAssetObjectUrl(active?.logo?.url ?? null)`; the panel preview uses `previewLogoUrl ?? active.logo.url` and `ThemePreview` receives `logoUrl={previewLogoUrl ?? active.logo?.url ?? null}`.
-- `frontend/src/features/branding/ThemePreview.tsx` — no change (already consumes the `logoUrl` prop).
-
-Verified:
-
-- `npm run build` + `npm run lint` pass.
+- [ ] CRUD + aktif/nonaktif PENEMPATAN berfungsi via admin API.
+- [ ] Daftar aktif (`GET /api/v1/placements`) hanya menampilkan ACTIVE.
 
 ---
 
-### FR-003: Optional production API base URL override via `VITE_API_URL`
+### FR-003: User model + DTO + service — NIP, Kontrak, Penempatan (ObjectId + populate nama)
 
-**Type:** Configuration / Frontend
+**Type:** Backend / Database / API
 
-**Priority:** Medium
+**Priority:** High
 
-**Status:** Implemented — verified
+**Status:** Proposed
 
 - [x] Implement requirement
 
 **Description:**
-The user asked for the ngrok URL to be "added" to asset/attachment URLs. The maintainable version is an **environment variable override of the axios baseURL**, not a hardcoded string. `VITE_API_URL` already exists in `frontend/.env` but is unused. When set at Vercel build time, axios calls go directly to that origin (e.g., the ngrok tunnel or, later, Render); when unset, the default relative `/api/v1` (Vercel rewrite path) is used.
+Tambahkan ke user: `nip` (string), `contractTypeId` (ObjectId → `contract_types`), `placementId` (ObjectId → `placements`). Backend menerima field ini di create/update, memvalidasi referensi AKTIF, menyimpannya, mengembalikannya beserta nama (`contractName`/`placementName`) yang di-populate (batch resolve, pola `loadRelationNames`).
 
 **Current Behavior:**
-`baseURL: "/api/v1"` is a hardcoded constant (`axios.ts:161`); `VITE_API_URL` is defined but never read.
+User tidak punya field tersebut; DTO menolak; DTO respons tidak menampilkan.
 
 **Expected Behavior:**
-`baseURL` = `import.meta.env.VITE_API_URL` when set (trailing `/` trimmed), else `"/api/v1"`.
+`POST/PUT /users` menerima `nip`, `contractTypeId`, `placementId`; respons user (list/get/create/update) menyertakan `nip`, `contractTypeId`, `placementId`, `contractName`, `placementName`.
 
 **Affected Files:**
-- `frontend/src/lib/axios.ts` (baseURL resolution at 160-163)
-- `frontend/.env` (optional value; do not change required default semantics)
-- Documentation: `frontend/vercel.json` notes + this TODO (no source comment needed)
+- `backend/src/infrastructure/models/user.model.js`
+- `backend/src/presentation/dto/user.dto.js`
+- `backend/src/application/user-admin.service.js`
 
 **Implementation Instructions:**
-1. At module top of `axios.ts`:
-   - `const configuredBase = import.meta.env.VITE_API_URL?.trim().replace(/\/+$/, "") ?? "";`
-   - `baseURL: configuredBase ? `${configuredBase}/api/v1` : "/api/v1"`.
-2. Keep the `ngrok-skip-browser-warning` header (it only affects direct-ngrok calls; harmless otherwise).
-3. **CORS note for the Developer/Operator**: direct calls to the ngrok origin are cross-origin; with `credentials: true` the backend `CORS_ORIGINS` must include the exact Vercel origin (`backend/src/infrastructure/config.js:50-53`). The default relative path (Vercel rewrite) is same-origin and avoids CORS — prefer it unless the rewrite path is intentionally bypassed.
-4. Do not change the default (`/api/v1`) behavior.
+1. **Model** (`user.model.js`), setelah blok `positionId` (jangan ubah field lama):
+   ```js
+   // NIP + master-data relations (Kontrak / Penempatan) — ObjectId refs that
+   // are populated into display names by UserAdminService.
+   nip: { type: String, default: "", trim: true },
+   contractTypeId: { type: mongoose.Schema.Types.ObjectId, ref: "ContractType", default: null, index: true },
+   placementId: { type: mongoose.Schema.Types.ObjectId, ref: "Placement", default: null, index: true },
+   ```
+   - Jangan tambah index unik pada `nip` (tidak diminta).
+2. **DTO** (`user.dto.js`):
+   - `createUserDto` + `updateUserDto` tambah: `nip: z.string().trim().max(64).optional()`, `contractTypeId: z.string().min(1).optional().nullable()`, `placementId: z.string().min(1).optional().nullable()`.
+3. **Service** (`user-admin.service.js`):
+   - Tambah method `assertActiveMasterRefs({ contractTypeId, placementId })` — jika ada, pastikan entitas ada + `status === "ACTIVE"` (via `contractTypeService.isActiveType`/`placementService.isActiveType` atau repository); jika INACTIVE/not-found → `ConflictError` `MASTER_INACTIVE`/`MASTER_NOT_FOUND` (ikuti gaya pesan `assertActiveOrgRefs`).
+   - `createUser`: panggil `assertActiveMasterRefs` (guard `if (this.contractTypeService && this.placementService)` — tetap aman bila deps null); simpan `nip: input.nip ?? ""`, `contractTypeId`, `placementId` di `userRepository.create`; sertakan di audit metadata.
+   - `updateUser`: masukkan `nip`, `contractTypeId`, `placementId` ke `before`/`after` audit dan ke `userRepository.update`.
+   - `toUserDto` (+ `getUser`/`enrichRoleKeys` normalized shape): tambah `nip: user.nip ?? ""`, `contractTypeId: user.contractTypeId?.toString?.() ?? null`, `placementId: user.placementId?.toString?.() ?? null`.
+   - Perluas `loadRelationNames` (batch) agar memuat `contractName`/`placementName` (lookup `ContractTypeModel`/`PlacementModel` by ids — atau via `contractTypeService.findById`/`placementService.findById`; lebih baik repository `.findByIds` jika ada — jika tidak, buat helper lookup sederhana di service). Sertakan di map hasil sehingga `toUserDto` mengisi `contractName`/`placementName`.
+   - Tambahkan deps baru pada constructor: `contractTypeService`, `placementService` (nullable — pola `orgRepository`).
+4. **server.js**: saat membuat `UserAdminService`, oper `contractTypeService` + `placementService` (yang dibuat di FR-001/FR-002).
+5. Jangan hapus `departmentId`/`positionId`/`managerId` dari model/DTO (dipakai org/reporting/team).
 
 **Dependencies:**
-- None.
+- FR-001, FR-002 (service master data).
 
 **Must Preserve:**
-- Default relative `/api/v1` behavior for local dev and the Vercel-rewrite path.
-- Interceptor behavior (refresh/replay).
+- Semua field user lama + perilaku `assertActiveOrgRefs`, quota, work schedule, roles, audit.
+- `departmentName`/`positionName`/`managerName` tetap ada di respons (hanya UI yang tidak menampilkan lagi — FR-006).
 
 **Acceptance Criteria:**
-- [x] Without `VITE_API_URL`, axios still calls `/api/v1/...` (local dev + Vercel rewrite path unchanged). *(verified: `configuredApiBase` is `""` when unset → baseURL stays `/api/v1`)*
-- [x] With `VITE_API_URL=https://walk-sycamore-sublevel.ngrok-free.dev` at build time, axios calls resolve to that origin + `/api/v1` (no trailing-slash bugs). *(verified: trim + strip trailing `/` before composing)*
-- [x] No hardcoded ngrok URL in source files. *(verified)*
-
-#### Implementation Notes
-
-Implemented in:
-
-- `frontend/src/lib/axios.ts` — `const configuredApiBase = ((import.meta.env.VITE_API_URL as string | undefined) ?? "").trim().replace(/\/+$/, "")`; `baseURL: configuredApiBase ? `${configuredApiBase}/api/v1` : "/api/v1"`. Default behavior unchanged.
-
-Verified:
-
-- `npm run build` + `npm run lint` pass (tsc accepts `import.meta.env.VITE_API_URL` via `vite/client` types).
-- CORS note: direct `VITE_API_URL` calls to ngrok are cross-origin; `CORS_ORIGINS` on the backend must include the Vercel origin. The default relative path (Vercel rewrite) is same-origin and needs no CORS change.
+- [ ] `POST /api/v1/users` dengan `nip`, `contractTypeId` (AKTIF), `placementId` (AKTIF) → 201; respons berisi `nip/contractTypeId/placementId/contractName/placementName`.
+- [ ] Mengirim `contractTypeId` INACTIVE/tidak ada → 409/400 dengan pesan bisnis jelas; user tidak jadi dibuat.
+- [ ] `PUT /api/v1/users/:id` memperbarui `nip`/`contractTypeId`/`placementId`.
+- [ ] `GET /api/v1/users` dan `GET /api/v1/users/:id` mengembalikan `contractName`/`placementName`.
+- [ ] User lama (tanpa field baru) tetap tampil (`nip` = "", `contractTypeId` = null).
 
 ---
 
-### FR-004: Verify attachment and attendance-media flows (audit only, no code change)
+### FR-004: Frontend — API clients + Master Data UI (tab KONTRAK + PENEMPATAN)
 
-**Type:** Verification / Documentation
+**Type:** Frontend / UI
 
 **Priority:** High
 
-**Status:** Source audit complete — runtime verification pending operator
+**Status:** Proposed
 
-- [ ] Implement requirement (runtime acceptance criteria require live Vercel + running ngrok tunnel — cannot be executed from this environment)
-
-#### Implementation Notes
-
-Source-level verification COMPLETE (no code change was required):
-
-- `RequestAttachments.tsx:28-42` — `attachmentApi.download(item.id)` (axios blob) → `URL.createObjectURL` → programmatic download. Used at `RequestDetailDialog.tsx:66` and `RequestDrillDownDialog.tsx:125` (approval inbox/drill-down).
-- `attendanceApi.getMedia` (`axios.ts`) — blob fetch for selfies.
-- Repo-wide grep confirms `attachmentApi.downloadUrl` is defined (`axios.ts:631`) but **never called**; no `window.open(`, no `target="_blank"`, no raw attachment `<a href>`/URL rendering exists in `frontend/src`.
-- Therefore attachments already traverse the header-carrying axios client and need no source change.
-
-Blocked on: a browser session against the live Vercel origin with the ngrok tunnel running.
-
-Remaining (operator):
-- Verify the Unduh button downloads files from detail popups (izin/sakit/cuti/SPPD) and approval inbox/history on live Vercel.
+- [x] Implement requirement
 
 **Description:**
-The user believes attachment URLs need the ngrok prefix. Verified inspection shows attachments are **already blob-based through the header-carrying axios client** and need no code change. This FR captures the verified evidence and the required runtime verification.
+Tambahkan API clients untuk master data baru di `frontend/src/lib/axios.ts` dan 2 tab baru di `MasterDataPage.tsx` dengan reuse `MasterDataPanel`.
 
-**Verified Current Behavior (from source):**
-- `RequestAttachments.tsx:28-42` — `attachmentApi.download(item.id)` (axios blob) → `URL.createObjectURL` → programmatic download.
-- Used at `RequestDetailDialog.tsx:66` and `RequestDrillDownDialog.tsx:125` (approval inbox/drill-down = "kotak masuk persetujuan" / "riwayat persetujuan").
-- `attendanceApi.getMedia` (`axios.ts:670-674`) — blob fetch for selfies.
-- `attachmentApi.downloadUrl` (`axios.ts:606`) — **unused** (leave as-is; do not delete in this task).
-- No `<a href>`, `window.open`, or direct URL rendering of attachments exists (repo-wide grep).
+**Current Behavior:**
+Hanya tab Tipe Cuti + Tipe Sakit.
 
 **Expected Behavior:**
-No source change. Runtime verification only (see Testing / Verification).
+Tab "Kontrak" dan "Penempatan" — buat/aktif/nonaktif dengan panel yang sama.
 
 **Affected Files:**
-- None (verification only).
+- `frontend/src/lib/axios.ts`
+- `frontend/src/features/admin/MasterDataPage.tsx`
+- `contracts/contract-type.ts` (baru), `contracts/placement.ts` (baru) — atau perluas file type yang ada
 
 **Implementation Instructions:**
-1. Do not modify attachment code.
-2. Verify at runtime on live Vercel that the Unduh button in a request detail popup and in the approval drill-down downloads the file through the tunnel.
-3. If any future change introduces raw `<a href>` attachment URLs, it must be rejected in review (browser cannot send `ngrok-skip-browser-warning`).
+1. **Contract types** (`contracts/contract-type.ts`): `ContractTypeDto { id, key, name, description, status: "ACTIVE"|"INACTIVE", updatedAt? }`, `ContractTypeListResponse = ApiEnvelope<{ items: ContractTypeDto[] }>`, `ContractTypeResponse = ApiEnvelope<ContractTypeDto>`.
+2. **axios.ts**: salin pola `sicknessTypeApi`/`sicknessTypeAdminApi`:
+   - `contractTypeApi = { list: () => api.get<ContractTypeListResponse>("/contract-types") }`
+   - `contractTypeAdminApi = { list: () => api.get<ContractTypeListResponse>("/admin/contract-types"), create: (body) => api.post<ContractTypeResponse>("/admin/contract-types", body), update: (id, body) => api.put<ContractTypeResponse>(`/admin/contract-types/${id}`, body), activate: (id) => api.post(`/admin/contract-types/${id}/activate`), deactivate: (id) => api.post(`/admin/contract-types/${id}/deactivate`) }`
+   - Pola sama untuk `placementApi`/`placementAdminApi`.
+3. **MasterDataPage.tsx**:
+   - `MasterTab` → `"leave" | "sickness" | "contract" | "placement"`.
+   - `TABS` tambah `{ key: "contract", label: "Kontrak" }` dan `{ key: "placement", label: "Penempatan" }`.
+   - Tambah query `contractQuery` (`contractTypeAdminApi.list().then(r => r.data.data?.items ?? [])`) + `placementQuery`; invalidate per tab.
+   - Render `<MasterDataPanel title="Kontrak" ...>` dan `<MasterDataPanel title="Penempatan" ...>` (showBalanceFields=false), dengan `onCreate`/`onActivate`/`onDeactivate` memanggil admin API + invalidate.
 
 **Dependencies:**
-- None.
+- FR-001, FR-002 (endpoint).
 
 **Must Preserve:**
-- Authenticated blob downloads (files are never exposed without a token).
+- Tab Tipe Cuti/Tipe Sakit tetap berfungsi (tipe `MasterTab` diperluas tanpa merusak).
+- `MasterDataPanel` tidak diubah (kecuali optional).
 
 **Acceptance Criteria:**
-- [ ] Runtime verification passes for izin, sakit, cuti, perjalanan dinas detail popups. *(pending operator)*
-- [ ] Runtime verification passes for approval inbox / approval history drill-down. *(pending operator)*
+- [ ] Tab Kontrak/Penempatan muncul dan bisa create + toggle status.
+- [ ] Data baru muncul setelah create/invalidate (React Query).
+- [ ] `npm run build` + `npm run lint` lolos.
 
 ---
 
-### FR-005: Deployment configuration verification (vercel.json + redeploy)
+### FR-005: Frontend — form Pengguna Baru & Edit (NIP + Kontrak + Penempatan, tanpa Departemen/Jabatan)
 
-**Type:** Operational / Deployment
+**Type:** Frontend / UI
 
 **Priority:** High
 
-**Status:** Repo-level verified — live redeploy/tunnel pending operator
+**Status:** Proposed
 
-- [ ] Implement requirement (live Vercel redeploy + ngrok tunnel status require the operator)
-
-#### Implementation Notes
-
-Repo-level verification COMPLETE:
-
-- `frontend/vercel.json` exists at the frontend root (correct location).
-- Rewrite order verified: `/api/:path*` → `https://walk-sycamore-sublevel.ngrok-free.dev/api/:path*` FIRST, then `/(.*)` → `/index.html` (SPA fallback last). Correct.
-
-Blocked on: operator actions — confirm Vercel project Root Directory is `frontend`, redeploy the Vercel project (so the corrected `vercel.json` + the FR-001/002/003 code are live), and confirm the ngrok tunnel is running with the URL matching `vercel.json`.
-
-Remaining (operator):
-- Confirm live Vercel deployment has picked up the rewrite.
-- If the ngrok tunnel URL rotated, update `frontend/vercel.json` and redeploy.
+- [x] Implement requirement
 
 **Description:**
-The Vercel rewrite is the routing backbone for the relative `/api/v1` paths. It must be deployed from the correct project root. If the live Vercel deployment predates the corrected `frontend/vercel.json` (previously at `frontend/src/vercel.json`), `/api/...` hits the SPA fallback and every asset/API call fails — this alone explains broken logos.
+- **CreateUserDialog**: hapus `DepartmentSelect`/`PositionSelect`; tambah field NIP (string) + `ContractTypeSelect` + `PlacementSelect` (aktif dari DB, tidak hardcode).
+- **EditUserDialog**: tambah NIP + `ContractTypeSelect` + `PlacementSelect` (terisi nilai saat ini).
 
-**Current State:**
-- `frontend/vercel.json` now exists at the frontend root (correct location) with `/api/:path*` rewrite **before** the `/(.*)` → `/index.html` SPA fallback.
-- Whether the live Vercel deployment has picked it up is **unknown** (operator must confirm).
+**Current Behavior:**
+Create punya Departemen/Jabatan; keduanya tidak punya NIP/Kontrak/Penempatan.
 
 **Expected Behavior:**
-Live Vercel deployment contains a working `/api/:path*` → ngrok rewrite.
+Form baru/edit menampilkan NIP + pilihan Kontrak + Penempatan; payload API menyertakan `nip`, `contractTypeId`, `placementId`.
 
 **Affected Files:**
-- `frontend/vercel.json` (verify order; do not reorder)
-- Vercel project settings (dashboard — operator action)
+- `frontend/src/features/admin/MasterSelects.tsx` (baru)
+- `frontend/src/features/users/CreateUserDialog.tsx`
+- `frontend/src/features/users/EditUserDialog.tsx`
+- `frontend/src/features/users/types.ts`
+- `contracts/user.ts` (atau types yang dipakai `usersApi.create/update`)
 
 **Implementation Instructions:**
-1. Confirm the Vercel project **Root Directory** is `frontend` (so `vercel.json` is read).
-2. Confirm rewrite order: `/api/:path*` first, then `/(.*)` → `/index.html`.
-3. Redeploy the Vercel project (the recent `vercel.json` move + axios header change must be live).
-4. Confirm the ngrok tunnel is running and its public URL matches the one in `vercel.json` (note: if the tunnel URL changed, update `vercel.json` and redeploy).
+1. **MasterSelects.tsx** (salin pola `OrgPicker`):
+   - `ContractTypeSelect({ value, onChange })` → query `contractTypeApi.list()` (queryKey `["contract-types-active"]`), render `<select>` dengan opsi `contract.name` (value = id), opsi kosong "—".
+   - `PlacementSelect({ value, onChange })` → query `placementApi.list()` (queryKey `["placements-active"]`).
+   - Label: "Kontrak" dan "Penempatan".
+2. **CreateUserDialog.tsx**:
+   - Hapus import `DepartmentSelect, PositionSelect` dari `@/features/org/OrgPicker`; hapus `departmentId`/`positionId` dari state `form`.
+   - Tambah state `form.nip = ""`, `form.contractTypeId = ""`, `form.placementId = ""`.
+   - Render `<Input label="NIP" ...>` (string, maxLength 64) + `<ContractTypeSelect value={form.contractTypeId} onChange={(id) => update("contractTypeId", id)} />` + `<PlacementSelect ... />`.
+   - Payload `usersApi.create`: kirim `nip: form.nip.trim() || undefined`, `contractTypeId: form.contractTypeId || null`, `placementId: form.placementId || null`; HAPUS `departmentId`/`positionId` dari payload.
+3. **EditUserDialog.tsx**:
+   - State `form` tambah `nip: user.nip ?? ""`, `contractTypeId: user.contractTypeId ?? ""`, `placementId: user.placementId ?? ""`.
+   - Render NIP + ContractTypeSelect + PlacementSelect.
+   - Payload `usersApi.update`: kirim `nip: form.nip.trim() || undefined`, `contractTypeId: form.contractTypeId || null`, `placementId: form.placementId || null`.
+4. **types.ts** `UserListItem`: tambah `nip?: string`, `contractTypeId?: string | null`, `placementId?: string | null`, `contractName?: string | null`, `placementName?: string | null`.
+5. Update tipe payload `usersApi.create/update` di `axios.ts` (body type) agar menerima field baru; jaga tetap opsional agar user lama kompatibel.
+6. `ContractTypeSelect`/`PlacementSelect` harus tetap menampilkan nilai yang TIDAK aktif jika user lama masih memegangnya (jika perlu: tambahkan opsi "<nama> (nonaktif)" bila value terpilih tidak ada di daftar aktif) — minimal: jika value tidak ada di list, tetap render option dengan value tersebut agar form tidak "menghilangkan" data.
 
 **Dependencies:**
-- FR-001/FR-002 (so there is something to verify).
+- FR-004 (api clients), FR-003 (backend menerima field).
 
 **Must Preserve:**
-- Rewrite order; SPA fallback must remain last.
+- Field lama lain: username/email/name/peran/password/jatah/jadwal.
+- Perilaku `jatahCuti` + alasan + `updateWorkSchedule` di Edit.
 
 **Acceptance Criteria:**
-- [x] `frontend/vercel.json` exists at the frontend root with `/api/:path*` before the SPA fallback. *(repo-level verified)*
-- [ ] `GET https://<vercel-app>.vercel.app/api/v1/platform/branding` returns the branding JSON (not index.html). *(pending operator — requires live redeploy + tunnel)*
-- [ ] `GET https://<vercel-app>.vercel.app/api/v1/platform/branding-assets/<existing-token>` returns the logo bytes (verify via browser devtools response preview). *(pending operator)*
+- [ ] Create dialog: tanpa Departemen/Jabatan; ada NIP + Kontrak + Penempatan (opsi dari DB, bukan hardcode).
+- [ ] Edit dialog: NIP/Kontrak/Penempatan terisi nilai user saat ini dan bisa diubah.
+- [ ] Create + Edit sukses tanpa error; payload berisi `nip`, `contractTypeId`, `placementId`.
+- [ ] `npm run build` + `npm run lint` lolos.
+
+---
+
+### FR-006: Frontend — list Pengguna (hapus 3 kolom) + aksi Lihat (read-only, komponen sama dengan Edit)
+
+**Type:** Frontend / UI
+
+**Priority:** High
+
+**Status:** Proposed
+
+- [x] Implement requirement
+
+**Description:**
+- Hapus kolom **Departemen, Jabatan, Manajer** dari tabel.
+- Tambah aksi **"Lihat"** yang membuka komponen yang sama dengan Edit dalam mode read-only (tanpa tombol Simpan, menampilkan NIP/Kontrak/Penempatan).
+- (Opsional) tambah kolom NIP di tabel agar data NIP terlihat (diperbolehkan — tidak diminta eksplisit; jika ditambahkan, tetap minimal).
+
+**Current Behavior:**
+Kolom Departemen/Jabatan/Manajer ada; aksi hanya Edit/Nonaktifkan/Reset/Aktifkan.
+
+**Expected Behavior:**
+Tabel tanpa 3 kolom tersebut; ada tombol "Lihat" (gating `users:view`) yang membuka dialog read-only berisi detail sama seperti Edit.
+
+**Affected Files:**
+- `frontend/src/features/users/UsersPage.tsx`
+- `frontend/src/features/users/EditUserDialog.tsx` (tambah prop `readOnly`)
+- `frontend/src/features/users/QuotaAndScheduleSection.tsx` (tambah prop `disabled`/readOnly)
+- `frontend/src/features/users/types.ts`
+
+**Implementation Instructions:**
+1. **UsersPage.tsx**:
+   - Hapus `<th>` Departemen, Jabatan, Manajer (baris 126-128) dan `<td>` terkait (140-148).
+   - Tambah state `const [viewing, setViewing] = useState<UserListItem | null>(null);`.
+   - Di kolom Aksi, sebelum tombol Edit: `<Can permission={PERMISSIONS.USERS_VIEW}><Button size="sm" variant="secondary" onClick={() => setViewing(user)}>Lihat</Button></Can>`.
+     - Verifikasi `PERMISSIONS.USERS_VIEW` ada di `contracts/permissions.ts` (backend `users:view` sudah terdaftar). Jika tidak ada, tambahkan konstanta (manual mirror) — jangan menambah permission backend.
+   - Render: `{viewing ? <EditUserDialog user={viewing} readOnly onClose={() => setViewing(null)} onSaved={() => setViewing(null)} /> : null}`.
+2. **EditUserDialog.tsx**: tambah prop `readOnly = false`:
+   - `title={readOnly ? `Lihat ${user.name}` : `Edit ${user.name}`}`.
+   - Semua `Input`/select diberi `disabled={readOnly}`; `QuotaAndScheduleSection` diberi `disabled={readOnly}` (FR di bawah).
+   - Tombol "Simpan" hanya dirender bila `!readOnly`; tombol "Batal" dirender selalu (label "Tutup" bila readOnly, opsional).
+   - `handleSubmit` tidak terpanggil di mode readOnly (form tidak punya tombol submit).
+   - Jaga seluruh hook tetap dipanggil (tidak ada conditional hook) — hanya UI yang berubah.
+3. **QuotaAndScheduleSection.tsx**: tambah prop opsional `disabled = false`; set `disabled` pada semua input/select di dalamnya (atau bungkus dengan `<fieldset disabled>` bila komponen memungkinkan). Pastikan tidak memutus perilaku normal edit.
+4. Jika menambahkan kolom NIP di tabel: `<th>NIP</th>` + `<td>{user.nip || "—"}</td>` (opsional; konsisten dengan minimal scope).
+
+**Dependencies:**
+- FR-005 (field baru tampil di dialog).
+
+**Must Preserve:**
+- Aksi Edit/Nonaktifkan/Reset/Aktifkan tetap.
+- Gating permission aksi (Can) tetap.
+- Alur save edit (quota reason, work schedule) tidak berubah di mode non-readOnly.
+
+**Acceptance Criteria:**
+- [ ] Tabel pengguna tanpa kolom Departemen/Jabatan/Manajer.
+- [ ] Tombol "Lihat" muncul; dialog read-only menampilkan Nama/Email/NIP/Kontrak/Penempatan/Peran/Status/Jatah/Jadwal; tidak ada tombol Simpan; input nonaktif.
+- [ ] Edit normal tetap berfungsi penuh (readOnly=false).
+- [ ] `npm run build` + `npm run lint` lolos.
+
+---
+
+### FR-007: Testing end-to-end (backing service + unit/integration + build/lint)
+
+**Type:** Testing / Verification
+
+**Priority:** High
+
+**Status:** Proposed
+
+- [x] Implement requirement
+
+**Description:**
+Pastikan seluruh alur di atas teruji: unit test backend baru, integrasi API, build/lint frontend, dan skenario manual.
+
+**Current Behavior:**
+— (implementasi baru belum ada test).
+
+**Expected Behavior:**
+Test lulus; tidak ada regresi.
+
+**Affected Files:**
+- `backend/test/unit/contract-type.service.test.js` (baru)
+- `backend/test/unit/placement.service.test.js` (baru)
+- `backend/test/unit/user-admin.service.test.js` (perluas: create/update dengan nip/contractTypeId/placementId + validasi master ref)
+- `backend/test/integration/*` (opsional: endpoint admin master data)
+- `ai-project-context/TODO.md`
+
+**Implementation Instructions:**
+1. Tulis unit test service master data (create duplikat → conflict, update, activate/deactivate, isActiveType null-safe) mengikuti pola `test/unit/sickness-type.service.test.js` (jika ada) atau pola test service lain (in-memory fakes dari `test/helpers/fakes.js`).
+2. Perluas unit test `user-admin.service.test.js`: create user dengan `nip`/`contractTypeId`/`placementId` valid → field tersimpan + `contractName`/`placementName` terisi; dengan master INACTIVE → error.
+3. Jalankan `cd backend && npm run test:unit`.
+4. Jalankan `cd frontend && npm run build` + `npm run lint`.
+5. Skenario manual (untuk presentasi): buat KONTRAK + PENEMPATAN di Master Data → nonaktifkan satu → form user baru pilih aktif → buat user dengan NIP → edit user ganti kontrak/penempatan → Lihat user (read-only) → login user baru (mustChangePassword).
+
+**Dependencies:**
+- Semua FR sebelumnya.
+
+**Must Preserve:**
+- Seluruh test existing tetap hijau (tidak ada regresi).
+
+**Acceptance Criteria:**
+- [ ] `npm run test:unit` backend hijau (termasuk test baru).
+- [ ] `npm run build` + `npm run lint` frontend hijau.
+- [ ] Skenario manual presentasi berjalan tanpa error.
 
 ---
 
@@ -410,20 +532,45 @@ Live Vercel deployment contains a working `/api/:path*` → ngrok rewrite.
 
 ### Endpoint Changes
 
-None. All existing endpoints (`/api/v1/platform/branding`, `/api/v1/platform/branding-assets/:token`, `/api/v1/attachments/:id/download`, `/api/v1/attendance/media/:token`) remain unchanged.
+**Baru:**
+```
+GET    /api/v1/contract-types                # aktif, authenticated (form user)
+GET    /api/v1/admin/contract-types          # platform:settings
+POST   /api/v1/admin/contract-types          # platform:settings
+PUT    /api/v1/admin/contract-types/:id      # platform:settings
+POST   /api/v1/admin/contract-types/:id/activate    # platform:settings
+POST   /api/v1/admin/contract-types/:id/deactivate  # platform:settings
+GET    /api/v1/placements                    # aktif, authenticated
+GET    /api/v1/admin/placements              # platform:settings
+POST   /api/v1/admin/placements              # platform:settings
+PUT    /api/v1/admin/placements/:id          # platform:settings
+POST   /api/v1/admin/placements/:id/activate    # platform:settings
+POST   /api/v1/admin/placements/:id/deactivate  # platform:settings
+```
+
+**Diubah (payload/response):**
+```
+POST /api/v1/users        → body + nip?, contractTypeId?, placementId?
+                            response + nip, contractTypeId, placementId, contractName, placementName
+PUT  /api/v1/users/:id    → body + nip?, contractTypeId?, placementId?
+                            response + (sama)
+GET  /api/v1/users        → items + field baru
+GET  /api/v1/users/:id    → + field baru
+```
 
 ### Request Changes
 
-None. Frontend-only change: logo fetched as blob instead of rendered from a relative path.
+Lihat di atas. `departmentId`/`positionId`/`managerId` TETAP diterima (tidak dihapus dari DTO) — hanya tidak dikirim dari form frontend lagi.
 
 ### Response Changes
 
-None. Backend keeps returning the relative `logo.url`.
+Tambahan field (additive) — klien lama tetap kompatibel.
 
 ### Error Handling
 
-- Logo blob fetch failure → fall back to the stored relative URL (or null) — never break bootstrap.
-- Tunnel/backend down → images/attachments fail as today; API errors surface normally.
+- Master INACTIVE/not-found pada assign user → `ConflictError`/`NotFoundError` dengan pesan bisnis (mis. `Kontrak yang dipilih tidak aktif.`).
+- Duplikat key master → 409.
+- Validasi DTO → 400 standar.
 
 ---
 
@@ -431,15 +578,15 @@ None. Backend keeps returning the relative `logo.url`.
 
 ### Existing Models
 
-Not affected.
+- `users`: tambah `nip` (String, default `""`), `contractTypeId` (ObjectId ref `ContractType`), `placementId` (ObjectId ref `Placement`). Additive, tanpa migrasi.
 
 ### Required Changes
 
-None.
+- Collection baru `contract_types`, `placements` (Mongoose auto-create).
 
 ### Migration Requirements
 
-None.
+Tidak ada. User lama otomatis `nip: ""`, refs `null`.
 
 ---
 
@@ -447,93 +594,90 @@ None.
 
 ### Pages
 
-- `frontend/src/pages/Login/index.tsx` — verify only (consumes `logoUrl`).
+- `frontend/src/features/admin/MasterDataPage.tsx` — +2 tab.
 
 ### Components
 
-- `frontend/src/components/layout/navbar/Navbar.tsx` — verify only.
-- `frontend/src/components/layout/sidebar/SidebarLogo.tsx` — verify only.
-- `frontend/src/features/branding/ThemePreview.tsx` — verify only.
-- `frontend/src/features/branding/BrandingSettingsPanel.tsx` — resolve preview logo via blob helper (FR-002).
+- Baru: `frontend/src/features/admin/MasterSelects.tsx` (ContractTypeSelect, PlacementSelect).
+- `frontend/src/features/users/UsersPage.tsx` — hapus kolom; + aksi Lihat.
+- `frontend/src/features/users/CreateUserDialog.tsx` — NIP + Kontrak + Penempatan; hapus Dept/Jabatan.
+- `frontend/src/features/users/EditUserDialog.tsx` — NIP + Kontrak + Penempatan; prop `readOnly`.
+- `frontend/src/features/users/QuotaAndScheduleSection.tsx` — prop `disabled`.
 
 ### Hooks / State
 
-- `frontend/src/lib/branding.ts` — `applyIdentity`/`applyBranding`: resolve logo URL → object URL; track + revoke previous object URL.
+- React Query baru untuk master aktif + admin.
 
-### Forms
+### Forms / Validation
 
-- Not affected.
-
-### Validation
-
-- Not affected.
+- NIP: input string opsional (maks 64).
+- Kontrak/Penempatan: select ObjectId; kirim `null` bila kosong.
 
 ### UI / UX
 
-- No visual changes; fixes broken image rendering on production.
+- Label Indonesia: "NIP", "Kontrak", "Penempatan", aksi "Lihat", dialog title "Lihat <nama>".
 
 ---
 
 ## Backend Changes
 
-### Routes / Controllers / Services / Validation / Authorization
+### Routes
 
-**None.** Backend is verified correct and must remain unchanged.
+- `contract-type.routes.js`, `placement.routes.js` (baru); mount di `server.js`.
+
+### Controllers
+
+- `contract-type.controller.js`, `placement.controller.js` (baru).
+
+### Services
+
+- `contract-type.service.js`, `placement.service.js` (baru); `user-admin.service.js` (perluas).
+
+### Validation
+
+- DTO baru master data; `user.dto.js` diperluas.
+
+### Authorization
+
+- Admin master data: `platform:settings`. Daftar aktif: authenticated. Tidak ada permission baru.
 
 ---
 
 ## Cross-Layer Implementation Flow
 
 ```text
-Browser (Vercel origin)
-  ↓
-<img src={logoUrl}>  (object URL created from blob, FR-001)
-  ↓
-bootstrapBranding() → brandingApi.public()  (axios, ngrok-skip-browser-warning header)
-  ↓
-GET /api/v1/platform/branding  (relative — resolved by Vercel rewrite)
-  ↓
-Vercel rewrite: /api/:path* → https://<ngrok>.ngrok-free.dev/api/:path*
-  ↓
-ngrok tunnel (header present ⇒ no interstitial)
-  ↓
-Backend Express: /api/v1/platform/branding → branding.service.getBranding()
-  ↓
-returns { identity: { logo: { url: "/api/v1/platform/branding-assets/<key>" } } }
-  ↓
-frontend: fetchBlobObjectUrl(logo.url) → GET /api/v1/platform/branding-assets/<key> (blob, header present)
-  ↓
-URL.createObjectURL(blob) → logoUrl → <img> renders
+Master Data KONTRAK / PENEMPATAN
+  MasterDataPage (tab) → admin API → controller → service → repository → contract_types/placements
+                                                                          ↓ (isActive)
+Form User Baru/Edit (NIP + ContractTypeSelect/PlacementSelect)
+  → POST/PUT /api/v1/users { nip, contractTypeId, placementId }
+  → user.dto (zod) → UserAdminService (assertActiveMasterRefs → persist)
+  → users doc { nip, contractTypeId, placementId }
+  → toUserDto + loadRelationNames → contractName/placementName
+  → UsersPage list (tanpa dept/jabatan/manager; aksi Lihat → EditUserDialog readOnly)
 ```
-
-Attachments use the identical blob pattern via `attachmentApi.download(id)` (already in place).
 
 ---
 
 ## Regression Protection
 
-The following existing functionality MUST NOT be broken:
-
-- Backend relative logo URL format (`branding.service.js:143`) — never change to an absolute/ngrok URL.
-- `bootstrapBranding()` anti-flash behavior in `main.tsx` (must stay non-blocking).
-- Local development logo/attachment behavior via the Vite proxy.
-- Authenticated attachment blob downloads (`RequestAttachments.tsx`) — keep token-bearing axios requests; never render raw attachment URLs.
-- The `/(.*)` → `/index.html` SPA fallback must remain the LAST rewrite.
-- Vercel rewrite order `/api/:path*` before `/(.*)`.
-- Interceptor behavior (403 denied toast, 401 single-flight refresh) in `axios.ts`.
-- Default axios `baseURL: "/api/v1"` when `VITE_API_URL` is unset.
+- `departmentId`/`positionId`/`managerId` di model + DTO + service TIDAK dihapus (dipakai Org, ReportingLine, ManagerTeam, dashboard, dsb.) — hanya UI form/kolom yang dihapus.
+- Perilaku create/edit user lama (roles, temp password, jatah, jadwal, alasan jatah) tidak berubah.
+- Master data tipe cuti/sakit tidak disentuh.
+- Auth/RBAC/approval/absensi/report tidak disentuh.
+- User lama (tanpa field baru) tetap valid.
+- Audit flow (`USER.CREATED`/`USER.UPDATED`/`SETTINGS.CHANGED`) tetap.
 
 ---
 
 ## Edge Cases
 
-- **Logo blob fetch fails** (tunnel down / 404): fall back to the stored relative URL or null; app boots with default branding — never throw from bootstrap.
-- **Object URL lifecycle**: when a logo is replaced (upload/remove/theme reload), revoke the previous object URL to avoid leaks; avoid revocation race on StrictMode double effects.
-- **Legacy stored logos**: any previously stored `logo.url` (relative) is converted transparently by the helper — no migration needed.
-- **`VITE_API_URL` trailing slash**: normalize (`trim` + strip trailing `/`) before composing baseURL.
-- **CORS when `VITE_API_URL` points at ngrok**: direct cross-origin calls require the ngrok/backend origin to be listed in backend `CORS_ORIGINS` (`config.js:50-53`); the default rewrite path is same-origin and needs no CORS change.
-- **Tunnel URL changes**: if the ngrok URL rotates, only `frontend/vercel.json` (and optional `VITE_API_URL`) need updating + redeploy; source code untouched.
-- **`attachmentApi.downloadUrl`** remains unused — leave it (out of scope to delete).
+- **Master INACTIVE dipilih**: backend menolak dengan pesan jelas; frontend hanya menampilkan daftar aktif (plus nilai lama user yang mungkin nonaktif).
+- **User lama memegang contractTypeId yang kini INACTIVE**: `contractName` tetap di-populate dari dokumen (history terjaga); select menampilkan opsi lama (nonaktif) agar tidak "hilang".
+- **NIP kosong/duplikat**: NIP tidak unik di level DB (tidak diminta); tidak ada validasi duplikat.
+- **Delete master**: tidak ada delete fisik — hanya deactivate (history preserved).
+- **readOnly dialog**: semua hook tetap dipanggil; tidak ada conditional hooks; tidak ada tombol submit.
+- **`PERMISSIONS.USERS_VIEW`**: verifikasi ada di `contracts/permissions.ts`; bila hilang tambahkan konstanta saja (mirror `users:view` backend yang sudah ada).
 
 ---
 
@@ -541,72 +685,81 @@ The following existing functionality MUST NOT be broken:
 
 ### Frontend
 
-- [ ] Local dev: login page, navbar, and sidebar render the logo (Vite proxy path).
-- [ ] Live Vercel: logo renders on login/navbar/sidebar with backend on ngrok.
-- [ ] Live Vercel: admin branding panel shows the current logo preview; uploading a new logo refreshes it.
-- [ ] Live Vercel: attachment Unduh works from request detail popup (izin/sakit/cuti/perjalanan dinas).
-- [ ] Live Vercel: attachment Unduh works from approval inbox / approval history drill-down.
-- [ ] Live Vercel: attendance selfie preview (`attendanceApi.getMedia`) renders.
+- [ ] `npm run build` (tsc + vite) hijau.
+- [ ] `npm run lint` hijau.
+- [ ] Tab Kontrak/Penempatan create + toggle.
+- [ ] Create/Edit user dengan NIP + Kontrak + Penempatan.
+- [ ] Aksi Lihat read-only (tanpa Simpan, menampilkan NIP/Kontrak/Penempatan).
+- [ ] List tanpa kolom Departemen/Jabatan/Manajer.
 
 ### Backend
 
-- [ ] No backend changes; run existing backend unit tests to confirm no regressions (`cd backend && npm run test:unit`).
+- [ ] `cd backend && npm run test:unit` hijau.
+- [ ] Unit test master data + user-admin (create/update dengan refs).
+- [ ] (Opsional) integrasi API admin master data.
 
 ### API
 
-- [ ] `GET https://<vercel-app>.vercel.app/api/v1/platform/branding` → JSON (not index.html).
-- [ ] `GET https://<vercel-app>.vercel.app/api/v1/platform/branding-assets/<existing-token>` → image bytes.
-- [ ] `GET /api/v1/attachments/:id/download` with Bearer token → file bytes (local + through tunnel).
+- [ ] `POST /users` + `PUT /users/:id` dengan `nip`/`contractTypeId`/`placementId`.
+- [ ] `GET /users`, `GET /users/:id` mengembalikan `contractName`/`placementName`.
+- [ ] Admin master data CRUD + activate/deactivate.
 
 ### Database
 
-- [ ] No database changes required.
+- [ ] `contract_types`, `placements` terbentuk; `users` menyimpan ObjectId.
+- [ ] User lama tetap terbaca (`nip` "", refs null).
 
 ### RBAC
 
-- [ ] Attachment download still requires `files:download`; public branding asset still public (no auth regression).
+- [ ] Hanya `platform:settings` yang bisa manage master data.
+- [ ] Daftar aktif hanya butuh auth (bukan admin).
 
 ### Regression
 
-- [ ] Local dev login flow works.
-- [ ] Vercel SPA routes (deep links) still fall back to `index.html`.
+- [ ] Tipe Cuti/Tipe Sakit tetap jalan.
+- [ ] Edit user (jatah + alasan + jadwal) tetap jalan.
+- [ ] Manager/team/reporting tetap jalan (field dept/pos/manager tidak dihapus).
 
 ---
 
 ## Implementation Order
 
-1. **FR-001** — blob helper + logo object URL (core fix; unblocks the visible symptom).
-2. **FR-002** — BrandingSettingsPanel/ThemePreview preview fix (depends on FR-001 helper).
-3. **FR-004** — attachment/media verification (independent; can run in parallel with 1-2).
-4. **FR-003** — optional `VITE_API_URL` base override (independent; low risk).
-5. **FR-005** — deployment verification + redeploy (last; verifies 1-4 on live).
+1. **FR-001** — master data KONTRAK backend.
+2. **FR-002** — master data PENEMPATAN backend (pola sama; bisa paralel dengan FR-001).
+3. **FR-003** — user model/DTO/service (depend: FR-001/002 service untuk validasi aktif).
+4. **FR-004** — frontend API clients + tab Master Data (depend: FR-001/002).
+5. **FR-005** — form user baru/edit (depend: FR-003, FR-004).
+6. **FR-006** — list + aksi Lihat (depend: FR-005).
+7. **FR-007** — testing end-to-end (depend: semua).
 
-Dependency note: FR-002 depends on FR-001's helper; FR-005 depends on FR-001/FR-002 being deployed.
+Catatan: FR-001/FR-002 independen; FR-003 bergantung pada service master data; FR-004-006 berurutan di frontend.
 
 ---
 
 ## Developer Notes
 
-- **Never hardcode the ngrok URL in source.** It is ephemeral and leaks the tunnel in the bundle. Use the Vercel rewrite (relative paths) or the `VITE_API_URL` env var.
-- **The `<img>` tag cannot send `ngrok-skip-browser-warning`.** Any "add the ngrok URL to the img src" change is therefore insufficient on its own — blob fetching via axios is the correct mechanism.
-- The backend already added the header to its axios client (`axios.ts:162`); keep it.
-- Keep the change minimal: one helper in `axios.ts`, async logo resolution in `branding.ts`, preview fix in `BrandingSettingsPanel.tsx`, optional baseURL override. Do not touch routes, contracts, or the backend.
-- If the operator has a stable Render backend (see `ai-project-context/RENDER-DEPLOYMENT.md`), it should replace the ngrok URL in `vercel.json` — this entire class of issues disappears (no interstitial, persistent URL).
+- **Jangan hapus `departmentId`/`positionId`/`managerId`** dari backend — banyak modul bergantung padanya. Hanya UI (form + kolom) yang dibersihkan sesuai permintaan.
+- **Populate**: gunakan pola batch resolve yang sudah ada (`loadRelationNames`/`enrichRoleKeys`) untuk `contractName`/`placementName`, bukan menambah `.populate()` baru di query — konsisten dengan arsitektur repo.
+- **Naming konsisten**: `ContractType`/`contract_types`/`contractTypeId` dan `Placement`/`placements`/`placementId`. Jangan pakai `Kontrak`/`Penempatan` sebagai identifier kode.
+- **MasterDataPanel** sudah reusable; JANGAN fork/duplikasi panel — cukup tambah tab + query.
+- **Aksi Lihat** = prop `readOnly` pada `EditUserDialog` (sesuai permintaan "komponen yang sama dengan Edit"), bukan dialog baru.
+- **Testing hari ini**: pastikan `npm run test:unit` (backend) dan `npm run build` + `npm run lint` (frontend) hijau SEBELUM presentasi; jalankan juga skenario manual utama.
+- **Tidak ada permission baru** — reuse `platform:settings`, `users:view`, `users:create`, `users:edit`.
+- **Excel import massal (74 karyawan) BUKAN bagian request ini** — setelah fitur ini, master data + field user siap diisi; import massal dapat menjadi task lanjutan (lihat TODO sebelumnya `seed-tad-employees`).
 
 ---
 
 ## Definition of Done
 
-- [x] FR-001 implemented (code): logo resolves via blob object URL; build + lint pass. Live Vercel rendering pending operator.
-- [x] FR-002 implemented (code): admin branding preview resolves via blob object URL; build + lint pass. Live Vercel preview pending operator.
-- [x] FR-003 implemented: `VITE_API_URL` override works, default unchanged; build + lint pass.
-- [ ] FR-004 verified: attachments + attendance media download on live Vercel (detail popups + approval inbox/history). *(source audit done; runtime pending operator)*
-- [x] FR-005 repo-level verified: `frontend/vercel.json` at project root, rewrite order correct. Live deployment pending operator.
-- [x] Backend unchanged — no backend files modified (unit tests not re-run; no backend code changed).
-- [x] No ngrok URL hardcoded in `frontend/src/**`.
-- [x] Local dev behavior preserved (relative `/api/v1` default unchanged; build + lint pass).
-- [x] Edge cases handled (blob failure fallback, object URL revocation, generation guard, trailing slash, CORS note).
-- [x] No unrelated modules modified.
+- [ ] FR-001: Master data KONTRAK backend lengkap (CRUD + aktif/nonaktif + audit + endpoint aktif).
+- [ ] FR-002: Master data PENEMPATAN backend lengkap.
+- [ ] FR-003: User model/DTO/service menerima & mengembalikan `nip`, `contractTypeId`, `placementId`, `contractName`, `placementName`; validasi master aktif.
+- [ ] FR-004: Tab Kontrak + Penempatan di Master Data (API clients + UI) berfungsi.
+- [ ] FR-005: Form user baru/edit punya NIP + Kontrak + Penempatan (dari DB, ObjectId), tanpa Departemen/Jabatan di form baru.
+- [ ] FR-006: List user tanpa kolom Departemen/Jabatan/Manajer; aksi Lihat read-only berfungsi (tanpa Simpan).
+- [ ] FR-007: Backend unit tests, frontend build + lint hijau; skenario manual presentasi lulus.
+- [ ] Tidak ada regresi pada tipe cuti/sakit, edit user lama, org/reporting/team, auth/RBAC.
+- [ ] `departmentId`/`positionId`/`managerId` tetap ada di backend (tidak dihapus).
 
 ---
 
@@ -614,40 +767,75 @@ Dependency note: FR-002 depends on FR-001's helper; FR-005 depends on FR-001/FR-
 
 ### Completed
 
-- FR-001 — branding logo loaded via axios blob + object URL (helper `fetchBlobObjectUrl` in `lib/axios.ts`; async logo resolution with generation guard + revocation in `lib/branding.ts`).
-- FR-002 — admin branding live preview + `ThemePreview` resolved via `useAssetObjectUrl`.
-- FR-003 — optional `VITE_API_URL` axios baseURL override (default `/api/v1` unchanged).
-- FR-004 — source audit complete (attachments/selfies already blob-based; no code change).
-- FR-005 — repo-level verification complete (`frontend/vercel.json` at root, rewrite order correct).
+- FR-001 — Master data KONTRAK backend lengkap (CRUD + aktif/nonaktif + audit + endpoint aktif)
+- FR-002 — Master data PENEMPATAN backend lengkap
+- FR-003 — User model/DTO/service menerima & mengembalikan `nip`, `contractTypeId`, `placementId`, `contractName`, `placementName`; validasi master aktif
+- FR-004 — Tab Kontrak + Penempatan di Master Data (API clients + UI) berfungsi
+- FR-005 — Form user baru/edit punya NIP + Kontrak + Penempatan (dari DB, ObjectId), tanpa Departemen/Jabatan di form baru
+- FR-006 — List user tanpa kolom Departemen/Jabatan/Manajer; aksi Lihat read-only berfungsi (tanpa Simpan)
+- FR-007 — Backend unit tests, frontend build + lint hijau
 
 ### Files Changed
 
-- `frontend/src/lib/axios.ts`
-- `frontend/src/lib/branding.ts`
-- `frontend/src/features/branding/BrandingSettingsPanel.tsx`
-- `ai-project-context/TODO.md`
+Backend (new):
+
+- `backend/src/infrastructure/models/contract-type.model.js` (FR-001)
+- `backend/src/domain/contract-type.js` (FR-001)
+- `backend/src/infrastructure/repositories/contract-type.repository.js` (FR-001)
+- `backend/src/application/contract-type.service.js` (FR-001)
+- `backend/src/presentation/controllers/contract-type.controller.js` (FR-001)
+- `backend/src/presentation/routes/contract-type.routes.js` (FR-001)
+- `backend/src/presentation/dto/contract-type.dto.js` (FR-001)
+- `backend/src/infrastructure/models/placement.model.js` (FR-002)
+- `backend/src/domain/placement.js` (FR-002)
+- `backend/src/infrastructure/repositories/placement.repository.js` (FR-002)
+- `backend/src/application/placement.service.js` (FR-002)
+- `backend/src/presentation/controllers/placement.controller.js` (FR-002)
+- `backend/src/presentation/routes/placement.routes.js` (FR-002)
+- `backend/src/presentation/dto/placement.dto.js` (FR-002)
+- `backend/test/unit/contract-type.service.test.js` (FR-007)
+- `backend/test/unit/placement.service.test.js` (FR-007)
+
+Backend (modified):
+
+- `backend/src/infrastructure/models/user.model.js` (+nip/contractTypeId/placementId) (FR-003)
+- `backend/src/presentation/dto/user.dto.js` (FR-003)
+- `backend/src/application/user-admin.service.js` (assertActiveMasterRefs, create/update persistence + audit, loadRelationNames, toUserDto) (FR-003)
+- `backend/src/infrastructure/repositories/user.repository.js` (create/update accept new fields) (FR-003)
+- `backend/server.js` (wiring: 2 repos, 2 services, 2 controllers, 4 route mounts, UserAdminService deps, repositories return) (FR-001/002/003)
+- `backend/test/helpers/fakes.js` (InMemoryUserRepository create/update accept new fields) (FR-007)
+
+Kontrak:
+
+- `contracts/contract-type.ts` (FR-004)
+- `contracts/placement.ts` (FR-004)
+
+Frontend:
+
+- `frontend/src/lib/axios.ts` (contractTypeApi/AdminApi, placementApi/AdminApi, UserAdminDto + payload types) (FR-004)
+- `frontend/src/features/admin/MasterDataPage.tsx` (+2 tabs) (FR-004)
+- `frontend/src/features/admin/MasterDataPanel.tsx` (`isSystem` optional) (FR-004)
+- `frontend/src/features/admin/MasterSelects.tsx` (new: ContractTypeSelect, PlacementSelect) (FR-005)
+- `frontend/src/features/users/CreateUserDialog.tsx` (remove dept/position, add NIP/Kontrak/Penempatan) (FR-005)
+- `frontend/src/features/users/EditUserDialog.tsx` (NIP/Kontrak/Penempatan + readOnly prop) (FR-005/006)
+- `frontend/src/features/users/QuotaAndScheduleSection.tsx` (disabled prop) (FR-006)
+- `frontend/src/features/users/UsersPage.tsx` (remove 3 columns, add NIP column + Lihat action) (FR-006)
+- `frontend/src/features/users/types.ts` (UserListItem new fields) (FR-005)
 
 ### Database Changes
 
-- None
+- Additive only: `users` gains `nip` (String), `contractTypeId` (ObjectId ref ContractType), `placementId` (ObjectId ref Placement). New collections `contract_types` and `placements` auto-created by Mongoose on first write. No migration required.
 
 ### API Changes
 
-- None (frontend-only change; backend untouched)
-
-### Remaining Work
-
-- **Operator / runtime verification** (cannot be executed from this environment):
-  - FR-004: confirm attachment downloads from detail popups + approval inbox/history on live Vercel.
-  - FR-005: confirm Vercel project Root Directory is `frontend`, redeploy the Vercel project, confirm the ngrok tunnel is running with the URL matching `frontend/vercel.json`, and verify `GET /api/v1/platform/branding` + branding-assets return real bytes on the live origin.
-  - Optional: set `VITE_API_URL` at Vercel build time if the rewrite path is intentionally bypassed (see FR-003 CORS note).
+- New: `GET/POST/PUT/:id, POST /:id/activate, POST /:id/deactivate` for `/api/v1/admin/contract-types` and `/api/v1/admin/placements` (guard `platform:settings`); `GET /api/v1/contract-types` and `GET /api/v1/placements` (active, authenticated).
+- Modified: `POST/PUT /users` accept `nip`, `contractTypeId`, `placementId`; user responses include `nip`, `contractTypeId`, `placementId`, `contractName`, `placementName`.
 
 ### Verification
 
-- [x] Frontend verified — `npm run build` (tsc + vite) and `npm run lint` pass.
-- [x] Backend verified — no backend files modified.
-- [ ] API verified — endpoint behavior unchanged; live smoke tests pending operator.
-- [ ] Database verified — no database changes.
-- [x] RBAC verified — no auth/RBAC/permission code touched.
-- [x] Regression checked — relative default preserved, Vite proxy path unchanged, SPA fallback rewrite order preserved.
-
+- [x] Backend unit suite: 748 tests, 747 pass — 1 pre-existing unrelated failure (`request.service.test.js:237` `listMine` summary, documented earlier)
+- [x] New unit tests: contract-type.service.test.js (6), placement.service.test.js (6), user-admin.service.test.js +5 master-ref tests — all pass
+- [x] Frontend `tsc -b`: clean; `eslint .`: clean; `vite build`: succeeds
+- [x] API smoke test (live, superadmin token): admin master-data CRUD endpoints return 200/201; active lists return only ACTIVE records
+- [x] RBAC: admin endpoints require `platform:settings`; active lists require only authentication
+- [x] Regression: dept/position/manager fields remain in backend model/DTO/API (only UI columns/fields removed per request); sickness/leave master data untouched; legacy users without new fields serialize as `nip: ""`, refs `null`
