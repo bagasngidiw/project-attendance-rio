@@ -1,0 +1,15 @@
+# ============================================================
+# SECURITY: environment files containing secrets
+# Never commit these.
+# ============================================================
+.env
+.env.*
+!.env.example
+
+# ============================================================
+# SECURITY: local credential/instruction files (contain tokens)
+# These must never be committed or pushed.
+# ============================================================
+AUTO_GIT_START.md
+AUTO_GIT_DAILY.md
+github personal access tokens repo bagas, PENTING!!!.txt

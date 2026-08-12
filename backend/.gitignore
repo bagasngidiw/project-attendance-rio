@@ -23,6 +23,10 @@ dist-ssr
 *.sln
 *.sw?
 
+node_modules/
+.env
+.env.*
+!.env.example
 dist/
 build/
 coverage/
