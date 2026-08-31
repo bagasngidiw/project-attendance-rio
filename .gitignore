@@ -34,3 +34,8 @@ backend/salary-assets/
 backend/branding-assets/
 backend/attachment-assets/
 backend/attachment-media/
+
+# ============================================================
+# Root deployment tooling (npm install -D at project root)
+# ============================================================
+node_modules/

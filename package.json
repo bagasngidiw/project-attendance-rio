@@ -1,0 +1,10 @@
+{
+  "scripts": {
+    "deploy": "node deploy.js"
+  },
+  "devDependencies": {
+    "basic-ftp": "^6.2.1",
+    "dotenv": "^17.4.2",
+    "ftp-deploy": "^2.4.7"
+  }
+}
