@@ -132,7 +132,7 @@ async function purgeLegacy(client, remoteRoot) {
 }
 
 /** Syncs a local directory tree to a remote path via ftp-deploy (with retry). */
-async function syncDir(localRoot, remoteRoot, exclude, label, attempts = 8) {
+async function syncDir(localRoot, remoteRoot, exclude, label, attempts = 12) {
   let lastErr;
   for (let attempt = 1; attempt <= attempts; attempt += 1) {
     const deployer = new FtpDeploy();
@@ -154,7 +154,7 @@ async function syncDir(localRoot, remoteRoot, exclude, label, attempts = 8) {
     } catch (err) {
       lastErr = err;
       log(`${label} attempt ${attempt}/${attempts} failed (${err.message}); retrying...`);
-      await new Promise((resolve) => setTimeout(resolve, 3000));
+      await new Promise((resolve) => setTimeout(resolve, 5000));
     }
   }
   throw lastErr;
