@@ -12,9 +12,25 @@
 # ============================================================
 AUTO_GIT_START.md
 AUTO_GIT_DAILY.md
+AUTO_DEPLOY_PROD.md
 github personal access tokens repo bagas, PENTING!!!.txt
+ftp account cpanel idwebhost.txt
+ai-project-context/username-password-app.md
+
+# ============================================================
+# SECURITY: employee personal data (names + NIPs) — never commit
+# ============================================================
+ai-project-context/*.xlsx
 
 # ============================================================
 # Office temp lock files (e.g. ~$file.xlsx while open in Excel)
 # ============================================================
 ~$*
+
+# ============================================================
+# Uploaded runtime assets (never commit user files)
+# ============================================================
+backend/salary-assets/
+backend/branding-assets/
+backend/attachment-assets/
+backend/attachment-media/

@@ -31,6 +31,7 @@ const { RequestEventRepository } = require("./src/infrastructure/repositories/re
 const { RoutingRuleRepository } = require("./src/infrastructure/repositories/routing-rule.repository");
 const { AttendanceRepository } = require("./src/infrastructure/repositories/attendance.repository");
 const { AttachmentRepository } = require("./src/infrastructure/repositories/attachment.repository");
+const { SalarySlipRepository } = require("./src/infrastructure/repositories/salary-slip.repository");
 const { AttendanceCorrectionModel } = require("./src/infrastructure/models/attendance-correction.model");
 const {
   ReportProviderRegistry,
@@ -52,6 +53,7 @@ const { LeaveQuotaService } = require("./src/application/leave-quota.service");
 const { LeaveBalanceService } = require("./src/application/leave-balance.service");
 const { AttendanceLeaveSyncService } = require("./src/application/attendance-leave-sync.service");
 const { AttachmentService } = require("./src/application/attachment.service");
+const { SalarySlipService } = require("./src/application/salary-slip.service");
 const { LocalDiskStorage } = require("./src/infrastructure/storage/local-disk.storage");
 
 const { AuditService } = require("./src/application/audit.service");
@@ -133,6 +135,7 @@ const { SicknessTypeController } = require("./src/presentation/controllers/sickn
 const { ContractTypeController } = require("./src/presentation/controllers/contract-type.controller");
 const { PlacementController } = require("./src/presentation/controllers/placement.controller");
 const { AttachmentController } = require("./src/presentation/controllers/attachment.controller");
+const { SalarySlipController } = require("./src/presentation/controllers/salary-slip.controller");
 const { createAuthRoutes } = require("./src/presentation/routes/auth.routes");
 const { createRbacRoutes } = require("./src/presentation/routes/rbac.routes");
 const { createRbacAdminRoutes } = require("./src/presentation/routes/rbac-admin.routes");
@@ -169,6 +172,7 @@ const {
   createPublicBrandingRoutes,
 } = require("./src/presentation/routes/branding.routes");
 const { createAttachmentRoutes } = require("./src/presentation/routes/attachment.routes");
+const { createSalarySlipRoutes } = require("./src/presentation/routes/salary-slip.routes");
 
 const { AuditEventPublisher } = require("./src/infrastructure/audit-publisher");
 const { HashChainVerifier } = require("./src/infrastructure/hash-chain-verifier");
@@ -357,7 +361,7 @@ function buildApp(config) {
     userRepository,
     auditService,
   });
-  const approvalTargetService = new ApprovalTargetService({ approvalConfigurationService });
+  const approvalTargetService = new ApprovalTargetService({ approvalConfigurationService, userRepository });
   const approvalEngine = new ApprovalEngineService({
     approvalConfigurationService,
     requestService,
@@ -432,6 +436,19 @@ function buildApp(config) {
     approvalConfigurationService,
   });
   const attachmentController = new AttachmentController({ attachmentService });
+  // FR-006: salary invoice slips (local disk + salary_slips metadata).
+  const salarySlipRepository = new SalarySlipRepository();
+  const salarySlipStorage = new LocalDiskStorage({
+    storageDir: config.salaryAssetsDir,
+  });
+  const salarySlipService = new SalarySlipService({
+    salarySlipRepository,
+    userRepository,
+    storage: salarySlipStorage,
+    auditService,
+    eventBus,
+  });
+  const salarySlipController = new SalarySlipController({ salarySlipService });
   const managerTeamService = new ManagerTeamService({
     userRepository,
     userRoleRepository,
@@ -647,6 +664,12 @@ function buildApp(config) {
   app.use("/api/v1/org", createOrgRoutes({ orgController, authenticate, authorize }));
   app.use("/api/v1/reporting", createReportingRoutes({ reportingController, authenticate, authorize }));
   app.use("/api/v1/notifications", createNotificationRoutes({ notificationController, authenticate }));
+  // FR-006: salary invoice slips (upload / mine / all / download).
+  app.use("/api/v1/salary-slips", createSalarySlipRoutes({
+    salarySlipController,
+    authenticate,
+    authorize,
+  }));
 
   app.use(createNotFoundHandler());
   app.use(createErrorHandler());
@@ -663,6 +686,7 @@ function buildApp(config) {
       contractTypeRepository,
       placementRepository,
       approvalConfigurationRepository,
+      salarySlipRepository,
     },
   };
 }

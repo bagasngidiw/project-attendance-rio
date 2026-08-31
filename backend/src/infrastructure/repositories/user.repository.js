@@ -200,11 +200,13 @@ class UserRepository {
    * @param {string} [filters.status] ACTIVE | INACTIVE | PENDING
    * @param {string} [filters.departmentId]
    * @param {string[]} [filters.userIds] pre-resolved ids (e.g. role filter)
+   * @param {string} [filters.contractTypeId] master contract-type id
+   * @param {string} [filters.placementId] master placement id
    * @param {number} [filters.page]
    * @param {number} [filters.pageSize]
    * @returns {Promise<{ items: object[], total: number }>}
    */
-  async list({ search, status, departmentId, userIds, page = 1, pageSize = 20 } = {}) {
+  async list({ search, status, departmentId, userIds, contractTypeId, placementId, page = 1, pageSize = 20 } = {}) {
     if (userIds && userIds.length === 0) {
       return { items: [], total: 0 };
     }
@@ -215,6 +217,9 @@ class UserRepository {
     }
     if (status) filter.status = status;
     if (departmentId) filter.departmentId = departmentId;
+    // NEW UPDATE TAD SIMBIKA: filter by master contract/placement (FR-002).
+    if (contractTypeId) filter.contractTypeId = contractTypeId;
+    if (placementId) filter.placementId = placementId;
     if (userIds && userIds.length) filter._id = { $in: userIds };
 
     const [items, total] = await Promise.all([

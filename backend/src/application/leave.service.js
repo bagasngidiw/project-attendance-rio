@@ -79,7 +79,7 @@ class LeaveService {
     }
 
     const approval = this.approvalEngine
-      ? await this.approvalEngine.prepareSubmission({ requestType: "LEAVE", input })
+      ? await this.approvalEngine.prepareSubmission({ requestType: "LEAVE", input, requesterId })
       : null;
 
     return this.requestService.submitRequest({

@@ -11,7 +11,7 @@ export default function Navbar() {
 
   return (
     <header className="flex h-16 items-center justify-between border-b border-[var(--brand-border)] bg-[var(--brand-surface)] px-4 sm:px-6">
-      <div className="flex min-w-0 items-center gap-4">
+      <div className="flex min-w-0 flex-1 items-center gap-4">
         {/* Mobile hamburger — opens the drawer sidebar. */}
         <button
           onClick={() => setMobileOpen(true)}
@@ -19,6 +19,7 @@ export default function Navbar() {
           className="
             h-10
             w-10
+            shrink-0
             rounded-lg
             hover:bg-slate-100
             flex
@@ -37,6 +38,7 @@ export default function Navbar() {
           className="
             h-10
             w-10
+            shrink-0
             rounded-lg
             hover:bg-slate-100
             hidden
@@ -56,18 +58,18 @@ export default function Navbar() {
               className="h-8 w-8 shrink-0 object-contain"
             />
           ) : null}
-          <div className="leading-tight">
-            <p className="truncate text-sm font-semibold">
+          <div className="min-w-0 leading-tight">
+            <p className="max-w-32 truncate text-sm font-semibold">
               {applicationShortName || "HRIS"}
             </p>
-            <p className="max-w-64 truncate text-xs text-slate-500">
+            <p className="hidden max-w-40 truncate text-xs text-slate-500 sm:block">
               {applicationName}
             </p>
           </div>
         </div>
       </div>
 
-      <div className="flex items-center gap-2">
+      <div className="flex shrink-0 items-center gap-2">
         <NotificationBell />
         <UserDropdown />
       </div>

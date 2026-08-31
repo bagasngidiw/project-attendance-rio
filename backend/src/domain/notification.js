@@ -43,6 +43,12 @@ const TRIGGER_CATALOG = Object.freeze({
     recipients: [{ target: RECIPIENT_TARGETS.REQUESTER }],
     title: "Kata sandi Anda telah direset",
   }),
+  // FR-006: a SUPERADMIN uploaded a salary invoice slip for the receiver.
+  "salary.slip_uploaded": Object.freeze({
+    type: "salary.slip_uploaded",
+    recipients: [{ target: RECIPIENT_TARGETS.REQUESTER }],
+    title: "Slip Gaji Baru",
+  }),
 });
 
 /** Throws when an event has no registered trigger. */

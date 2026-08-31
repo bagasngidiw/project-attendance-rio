@@ -17,6 +17,7 @@ import {
   Bell,
   Stethoscope,
   Database,
+  ReceiptText,
 } from "lucide-react";
 
 import { PERMISSIONS } from "@contracts/permissions";
@@ -93,6 +94,13 @@ export const MENU: SidebarItem[] = [
           PERMISSIONS.TRIP_VIEW_OWN,
           PERMISSIONS.TRIP_VIEW_ALL,
         ],
+      },
+      // FR-006/FR-007: Slip Gaji — visible to receivers and SUPERADMIN.
+      {
+        title: "Slip Gaji",
+        path: "/salary-slips",
+        icon: ReceiptText,
+        permissions: [PERMISSIONS.SALARY_VIEW_OWN, PERMISSIONS.SALARY_MANAGE],
       },
       // FR-005: parent "Perijinan" group nests Cuti / Ijin / Sakit.
       {

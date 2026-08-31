@@ -26,18 +26,25 @@ class ApprovalTargetService {
   /**
    * @param {object} deps
    * @param {import('./approval-configuration.service').ApprovalConfigurationService} deps.approvalConfigurationService
+   * @param {import('../infrastructure/repositories/user.repository').UserRepository} deps.userRepository
    */
-  constructor({ approvalConfigurationService }) {
+  constructor({ approvalConfigurationService, userRepository }) {
     this.approvalConfigurationService = approvalConfigurationService;
+    this.userRepository = userRepository;
   }
 
   /**
    * Resolves the eligible roles + users for a request type.
    *
+   * FR-004 (contract scoping): when `requesterId` is provided, the eligible
+   * USER list is narrowed to the requester's contract (same contract OR
+   * contract-less approvers). Contract-less requesters see all eligible users.
+   *
    * @param {string} typeParam API type alias (overtime | business_trip | leave | permission)
    * @param {string} [roleId] narrow users to one role
+   * @param {string} [requesterId] scope users to the requester's contract
    */
-  async getEligibleTargets(typeParam, roleId = null) {
+  async getEligibleTargets(typeParam, roleId = null, requesterId = null) {
     const requestType = TYPE_ALIASES[typeParam];
     if (!requestType) {
       throw new ValidationError(
@@ -45,9 +52,16 @@ class ApprovalTargetService {
         { field: "type" }
       );
     }
+    let contractTypeId = null;
+    if (requesterId) {
+      const requester = await this.userRepository.findById(requesterId);
+      contractTypeId = requester?.contractTypeId
+        ? String(requester.contractTypeId)
+        : null;
+    }
     const [roles, users] = await Promise.all([
       this.approvalConfigurationService.getEligibleRoles(requestType),
-      this.approvalConfigurationService.getEligibleUsers(requestType, roleId),
+      this.approvalConfigurationService.getEligibleUsers(requestType, roleId, { contractTypeId }),
     ]);
     return { roles, users };
   }

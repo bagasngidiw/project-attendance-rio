@@ -149,6 +149,7 @@ export default function NotificationInboxPage() {
               ["request.decided", "Permintaan diputuskan"],
               ["request.cancelled", "Permintaan dibatalkan"],
               ["auth.password_reset", "Reset kata sandi"],
+              ["salary.slip_uploaded", "Slip Gaji"],
             ].map(([type, label]) => {
               const mandatory = prefs.data?.mandatoryTypes.includes(type) ?? false;
               const optedOut = prefs.data?.optOutTypes.includes(type) ?? false;

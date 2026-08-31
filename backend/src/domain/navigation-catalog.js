@@ -93,6 +93,16 @@ const NAVIGATION_CATALOG = Object.freeze([
         anyOf: ["trip:submit", "trip:view_own", "trip:view_all"],
         children: [],
       },
+      // FR-006/FR-007: Slip Gaji — receivers + SUPERADMIN.
+      {
+        id: "nav.salary_slips",
+        module: "SALARY",
+        label: "Slip Gaji",
+        path: "/salary-slips",
+        icon: "receipt-text",
+        anyOf: ["salary:view_own", "salary:manage"],
+        children: [],
+      },
       // FR-005: parent "Perijinan" group nests Leave / Permission / Sakit.
       {
         id: "nav.permissions",

@@ -95,6 +95,9 @@ export const PERMISSIONS = {
   SAKIT_REVIEW: "sakit:review",
   SAKIT_APPROVE: "sakit:approve",
 
+  SALARY_MANAGE: "salary:manage",
+  SALARY_VIEW_OWN: "salary:view_own",
+
   MFA_MANAGE: "mfa:manage",
 } as const;
 

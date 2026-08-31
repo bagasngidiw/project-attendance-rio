@@ -47,7 +47,7 @@ export function NotificationBell() {
   }
 
   return (
-    <div className="relative" ref={ref}>
+    <div className="relative shrink-0" ref={ref}>
       <button
         onClick={() => setOpen((v) => !v)}
         aria-label="Notifikasi"
@@ -62,7 +62,7 @@ export function NotificationBell() {
       </button>
 
       {open ? (
-        <div className="absolute right-0 z-50 mt-2 w-80 rounded-xl border border-slate-200 bg-[var(--brand-surface)] p-3 shadow-lg">
+        <div className="absolute right-0 z-50 mt-2 w-80 max-w-[calc(100vw-1rem)] rounded-xl border border-slate-200 bg-[var(--brand-surface)] p-3 shadow-lg">
           <div className="mb-2 flex items-center justify-between">
             <p className="text-sm font-semibold">Notifikasi</p>
             <Link

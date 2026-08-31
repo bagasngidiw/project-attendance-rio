@@ -14,6 +14,7 @@ import { Can } from "@/features/auth/Can";
 import { Spinner } from "@/components/ui/Spinner";
 import { Button } from "@/components/ui/Button";
 import { Input } from "@/components/ui/Input";
+import { ContractTypeSelect, PlacementSelect } from "@/features/admin/MasterSelects";
 
 import type { UserListItem } from "./types";
 import { CreateUserDialog } from "./CreateUserDialog";
@@ -26,6 +27,9 @@ const PAGE_SIZE = 10;
 export function UsersPage() {
   const [search, setSearch] = useState("");
   const [status, setStatus] = useState<string>("");
+  // NEW UPDATE TAD SIMBIKA: Kontrak & Penempatan filters (master-data selects).
+  const [contractId, setContractId] = useState("");
+  const [placementId, setPlacementId] = useState("");
   const [page, setPage] = useState(1);
   const [showCreate, setShowCreate] = useState(false);
   const [editing, setEditing] = useState<UserListItem | null>(null);
@@ -36,6 +40,8 @@ export function UsersPage() {
   const params = {
     search: search || undefined,
     status: status || undefined,
+    contractTypeId: contractId || undefined,
+    placementId: placementId || undefined,
     page,
     pageSize: PAGE_SIZE,
   };
@@ -98,6 +104,12 @@ export function UsersPage() {
             <option value="PENDING">Menunggu</option>
           </select>
         </div>
+        <div className="w-full sm:w-48">
+          <ContractTypeSelect value={contractId} onChange={(id) => setContractId(id)} />
+        </div>
+        <div className="w-full sm:w-48">
+          <PlacementSelect value={placementId} onChange={(id) => setPlacementId(id)} />
+        </div>
         <Button type="submit" size="md">
           Cari
         </Button>
@@ -127,6 +139,8 @@ export function UsersPage() {
                   <th className="px-4 py-3">Email</th>
                   <th className="px-4 py-3">Status</th>
                   <th className="px-4 py-3">Peran</th>
+                  <th className="px-4 py-3">Kontrak</th>
+                  <th className="px-4 py-3">Penempatan</th>
                   <th className="px-4 py-3 text-right">Aksi</th>
                 </tr>
               </thead>
@@ -152,6 +166,8 @@ export function UsersPage() {
                         ))}
                       </div>
                     </td>
+                    <td className="px-4 py-3 text-slate-600">{user.contractName || "—"}</td>
+                    <td className="px-4 py-3 text-slate-600">{user.placementName || "—"}</td>
                     <td className="px-4 py-3">
                       <div className="flex items-center justify-end gap-1.5">
                         <Can permission={PERMISSIONS.USERS_VIEW}>

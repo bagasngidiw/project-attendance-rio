@@ -215,7 +215,18 @@ class AttachmentService {
     const permissionKey = `${String(request.type).toLowerCase()}:approve`;
     if (!this.hasPermission(actor, permissionKey)) return false;
     if (!this.approvalConfigurationService) return false;
-    const users = await this.approvalConfigurationService.getEligibleUsers(request.type);
+    // FR-004: scoped to the requester's contract (same contract OR contract-less).
+    const requester = request.requesterId
+      ? await this.userRepository.findById(request.requesterId)
+      : null;
+    const contractTypeId = requester?.contractTypeId
+      ? String(requester.contractTypeId)
+      : null;
+    const users = await this.approvalConfigurationService.getEligibleUsers(
+      request.type,
+      null,
+      { contractTypeId }
+    );
     return users.some((u) => String(u.userId) === String(actor.actorId));
   }
 

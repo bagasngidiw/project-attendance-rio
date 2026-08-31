@@ -10,6 +10,7 @@ import type {
   SignInResponse,
   SessionResponse,
   MeResponse,
+  AssignRolesResponse,
 } from "@contracts/auth";
 
 import type {
@@ -111,6 +112,11 @@ import type {
   NotificationPreferencesResponse,
   UnreadCountResponse,
 } from "@contracts/notifications";
+
+import type {
+  SalarySlipListResponse,
+  SalarySlipUploadResponse,
+} from "@contracts/salary-slips";
 
 import type {
   BrandingLogoResponse,
@@ -490,6 +496,10 @@ export const rbacAdminApi = {
   /** FR-064: copy an existing role into an editable draft. */
   copyRole: (sourceId: string) =>
     api.get<RoleCopyEnvelope>(`/rbac/admin/roles/copy/${sourceId}`),
+
+  /** FR-003: replace a user's roles (existing PUT /rbac/users/:id/roles). */
+  assignRoles: (userId: string, roleIds: string[]) =>
+    api.put<AssignRolesResponse>(`/rbac/users/${userId}/roles`, { roleIds }),
 };
 
 /** Manager team overview API (FR-006). */
@@ -847,4 +857,40 @@ export const notificationApi = {
   preferences: () => api.get<NotificationPreferencesResponse>("/notifications/preferences"),
   updatePreferences: (optOutTypes: string[]) =>
     api.put<NotificationPreferencesResponse>("/notifications/preferences", { optOutTypes }),
+};
+
+/** Salary-slip API (FR-006 / FR-007) — upload by SUPERADMIN; receivers list/download. */
+export const salarySlipApi = {
+  upload: (
+    userId: string,
+    file: File,
+    fields: { payDate: string; periodLabel: string; notes?: string }
+  ) => {
+    const fd = new FormData();
+    fd.append("userId", userId);
+    fd.append("payDate", fields.payDate);
+    fd.append("periodLabel", fields.periodLabel);
+    if (fields.notes) fd.append("notes", fields.notes);
+    fd.append("file", file);
+    // The shared axios instance defaults to `Content-Type: application/json`,
+    // which would make axios serialize the FormData to JSON (req.file never
+    // populated → "A file is required."). Override per-request like
+    // attachmentApi.upload so multer receives a real multipart body.
+    return api.post<SalarySlipUploadResponse>("/salary-slips", fd, {
+      headers: { "Content-Type": "multipart/form-data" },
+    });
+  },
+  listMine: (params?: Record<string, unknown>) =>
+    api.get<SalarySlipListResponse>("/salary-slips/mine", { params }),
+  listAll: (params?: Record<string, unknown>) =>
+    api.get<SalarySlipListResponse>("/salary-slips", { params }),
+  /** Authenticated download URL (never anonymous). */
+  downloadUrl: (id: string) => `/salary-slips/${id}/download`,
+  /** Authenticated blob fetch for secure downloads. */
+  download: async (id: string) => {
+    const res = await api.get(`/salary-slips/${id}/download`, {
+      responseType: "blob",
+    });
+    return res.data as Blob;
+  },
 };

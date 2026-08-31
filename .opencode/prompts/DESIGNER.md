@@ -112,19 +112,29 @@ Do not blindly follow outdated context.
 
 # USER REQUEST FORMAT
 
-coba baca file di dalam ai-project-context/NEW UPDATE TAD SIMBIKA.xlsx
-aku tidak ingin menambahkan fitur lagi karena sudah di live, dan aku tidak mau memakai fitur organisasi untuk menempatkan jabatan, penempatan, nama kontrak, dan NIP, tapi karena sepertinya memang flow yang client mau adalah punya data2 seperti yg ada di excel tersebut, maka mau tidak mau ya harus ada menu baru ya, kalau aku kepikiran membuat 2 fitur pada master data
-yaitu KONTRAK dan PENEMPATAN, jadi pada menu master data kan sudah ada tipe sakit dan tipe cuti ya, nah aku ingin penambahan 2 lagi yaitu Kontrak dan Penempatan (sepertinya hanya butuh tipe data string), (JANGAN LUPA buat seperti Tipe sakit dan Tipe cuti yaitu dapat dinonaktifkan)
+coba baca file di dalam ai-project-context/NEWER ABSENSI SIMBIKA (PAKE INI).xlsx
+RESET SEMUA DATABASE NYA, ACCESS ENV MONGO_URI KU agar bisa me-reset mongodb cluster database ku dan database local mongodbcompass, reset saja gapapa aku ingin mulai dari ulang, akses env, config, tidak apa apa, aku ingin kamu create collection untuk mongodb, karena sekarang sudah ke mongodb cluster (jngn lupa untuk database local mongodbcompass).
+coba buat data collection yang berhubungan dengan accessing websitenya, seperti role, user, akses menu, berikut ketentuannya :
 
-lalu pada menu pengguna, remove form untuk departmen dan jabatan (sekaligus pada column departmen, jabatan dan manajer pada komponen list pengguna). nah masih di menu pengguna, ketika menambahkan pengguna baru dan edit pengguna, biarkan user memilih Kontrak dan Penempatan (data pilihan diambil dari Master data KONTRAK dan PENEMPATAN), JANGAN buat hardcode data pada pilihan Kontrak dan Penempatan di menu pengguna baru / edit, biarkan itu mengambil datanya dari databse Kontrak dan Penempatan (simpan pada collection user sebagai object id (harus di populate just in case diperlukan untuk mendapatkan data kontrak dan penempatan))
+aku ingin kau membuat ROLE
+SUPERADMIN
+ADMIN
+(LALU AMBIL NAMA ROLE-ROLE NYA DARI ai-project-context/NEWER ABSENSI SIMBIKA (PAKE INI).xlsx) baca dari kolom JABATAN (kolom E)
 
-lalu masih pada menu pengguna dan form pengguna baru dan edit pengguna, tambahkan form NIP (yang ini jangan dibuatkan kaya master ya, biarkan saja form nya disimpan dalam string pada collection pengguna seperti "nip")
+- Superadmin (username : superadmin) : dapat melihat semuanya, set password nya menjadi SuperAdmin2026!23 (JANGAN DIBUAT TEMPORARY YA PASSWORDNYA).
+kosongkan data nip, kontrak dan penempatan
 
-buat adjusment tersebut end to end (artinya dari backend sampai frontend sampai UI, proses dengan baik, testing dengan baik, jangan sampai ada error pada pembuatan Master data Kontrak dan Penempatan, jangan sampai error juga ketika memilih Kontrak dan Penempatan, baik di form pengguna baru maupun pada form edit pengguna).
+- ADMIN - pasangkan role ini dengan pengguna : (username : admin_simbika) : (password : admin2026!23 (JANGAN DIBUAT TEMPORARY YA PASSWORDNYA)) dapat melihat menu : Dashboard, Slip Gaji, Absensi, Lembur, Perjalanan Dinas, Izin, Sakit, Cuti, Pengguna, Laporan, Profil, Notifikasi(CENTANG SEMUANYA pada fitur access nya seperti view:all seperti itu, coba baca context databasenya ya agar tidak salah).
+kosongkan data nip, kontrak dan penempatan
 
-TAMBAHKAN AKSI "Lihat" pada menu pengguna, gunakan komponen yang sama dengan yang dipakai aksi "Edit", hanya saja pada Aksi "Lihat" tidak ada tombol "Simpan", TAMPILKAN HAL YG SAMA DENGAN APA YG ADA DI AKSI "Detail" jadi NIP, Kontrak dan Penempatan akan ada juga pada aksi "Lihat"
+- (ROLE YG DIAMBIL DARI KOLOM E JABATAN) - pasangkan role ini dengan pengguna : (username: BACA DARI FILE ai-project-context/NEWER ABSENSI SIMBIKA (PAKE INI).xlsx pada column D, username: {Nama Pegawai}_2026) dengan password: {nama pegawai lowercase}2026. JANGAN BUAT TEMPORARY YA PASSWORDNYA, dengan NIP baca dari column C. ROLE dapat melihat : Dashboard karyawan, Absensi (jangan ceklis semua, bisa kirim permintaan, upload file dan melihat data sendiri), Lembur (jangan ceklis semua, bisa kirim permintaan, upload file dan melihat data sendiri), Perjalanan Dinas (jangan ceklis semua, bisa kirim permintaan, upload file dan melihat data sendiri),Izin (jangan ceklis semua, bisa kirim permintaan, upload file dan melihat data sendiri), Sakit (jangan ceklis semua, bisa kirim permintaan, upload file dan melihat data sendiri) Cuti (jangan ceklis semua, bisa kirim permintaan, upload file dan melihat data sendiri), Permintaan Saya (dapat melihat data sendiri) dan Profil (dapat mengubah data diri pribadi), dan slip gaji hanya melihat data diri sendiri
 
-TOLONG PASTIKAN SEMUA CODE SUDAH DI TESTED DENGAN AMAN, karena hari ini akan mau di presentasikan kepada user, terima kasih
+BUAT DATA MASTER Kontrak dan Penempatan (BACA DARI FILE ai-project-context/NEWER ABSENSI SIMBIKA (PAKE INI).xlsx pada column B untuk Kontrak dan Column F untuk Penempatan)
+lalu BACA KESELURUHAN FILE ai-project-context/NEWER ABSENSI SIMBIKA (PAKE INI).xlsx UNTUK pasangkan data Kontrak dan Penempatan pada user dengan role YG DIAMBIL DARI KOLOM E JABATAN (JIKA ada data penempatan yang kosong dengan usernya, kosongkan saja, soalnya nanti bisa di edit kembali)
+
+BUAT DATA MASTER Tipe Sakit (Sakit Ringan), Tipe Cuti (Cuti Tahunan) menceklis yang berjatah (memakai saldo karyawan (aku gatau nama field nya apa))
+
+UNTUK SEMUA DATA PENGGUNA, BUAT CUTINYA 12 HARI, Jam kerja 8 - 17, hari kerja senin-jumat
 
 # ISSUE UNDERSTANDING
 

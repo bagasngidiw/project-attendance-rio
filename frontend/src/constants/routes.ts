@@ -10,6 +10,7 @@ export const ROUTES = {
   LEAVE: "/leave",
   PERMISSION: "/permission",
   SAKIT: "/sakit",
+  SALARY_SLIPS: "/salary-slips",
   MY_REQUESTS: "/my-requests",
   NOTIFICATIONS: "/notifications",
   USERS: "/users",

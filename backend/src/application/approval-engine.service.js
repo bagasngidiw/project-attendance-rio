@@ -74,11 +74,18 @@ class ApprovalEngineService {
    * Validates a requester-supplied target against the live configuration
    * (agents.md §13). Returns the normalized target.
    *
+   * FR-004 (contract scoping): when `requesterId` is provided, eligibility is
+   * checked against the requester's contract (same contract OR contract-less
+   * approvers) so a requester can never target an approver from another
+   * contract. The rule is enforced server-side only.
+   *
    * @param {string} requestType
    * @param {{ targetType?: string, targetRoleId?: string|null, targetUserId?: string|null }} target
+   * @param {{ requesterId?: string|null }} [opts]
    */
-  async validateTarget(requestType, target = {}) {
+  async validateTarget(requestType, target = {}, { requesterId = null } = {}) {
     assertTargetShape(target);
+    const contractTypeId = await this.resolveRequesterContract(requesterId);
 
     if (target.targetType === APPROVAL_TARGET_TYPES.ROLE) {
       const role = await this.roleRepository.assertExists(target.targetRoleId);
@@ -96,7 +103,11 @@ class ApprovalEngineService {
         );
       }
       // A role target must resolve to at least one eligible ACTIVE user.
-      const users = await this.approvalConfigurationService.getEligibleUsers(requestType, target.targetRoleId);
+      const users = await this.approvalConfigurationService.getEligibleUsers(
+        requestType,
+        target.targetRoleId,
+        { contractTypeId }
+      );
       if (users.length === 0) {
         throw new ValidationError(
           "The selected role has no eligible approvers available.",
@@ -120,7 +131,11 @@ class ApprovalEngineService {
         field: "approvalTarget.targetUserId",
       });
     }
-    const eligibleUsers = await this.approvalConfigurationService.getEligibleUsers(requestType);
+    const eligibleUsers = await this.approvalConfigurationService.getEligibleUsers(
+      requestType,
+      null,
+      { contractTypeId }
+    );
     const match = eligibleUsers.find((u) => String(u.userId) === String(target.targetUserId));
     if (!match) {
       throw new ValidationError(
@@ -139,14 +154,26 @@ class ApprovalEngineService {
   }
 
   /**
+   * FR-004: resolves the requester's contract id (null for contract-less
+   * users). Contract-less requesters see all eligible approvers.
+   *
+   * @param {string|null} requesterId
+   */
+  async resolveRequesterContract(requesterId) {
+    if (!requesterId) return null;
+    const requester = await this.userRepository.findById(requesterId);
+    return requester?.contractTypeId ? String(requester.contractTypeId) : null;
+  }
+
+  /**
    * Builds the assignment + immutable configuration snapshot for a submission.
    * User-targets assign directly; role-targets stay claimable (assignedUserId
    * null) until an eligible approver claims them.
    *
-   * @param {{ requestType: string, target: object }} input
+   * @param {{ requestType: string, target: object, requesterId?: string|null }} input
    */
-  async buildAssignment({ requestType, target }) {
-    const validated = await this.validateTarget(requestType, target);
+  async buildAssignment({ requestType, target, requesterId = null }) {
+    const validated = await this.validateTarget(requestType, target, { requesterId });
     const snapshot = this.approvalConfigurationService.buildSnapshot({
       requestType,
       targetType: validated.targetType,
@@ -172,13 +199,16 @@ class ApprovalEngineService {
    * FR-007: resolves the DEFAULT eligible ROLE target for a request type when
    * the requester supplied no explicit approval target. Picks the highest
    * approval-level configured role that is targetable (`canBeTarget`) and has
-   * at least one eligible ACTIVE user; returns null when no role qualifies so
-   * the legacy routing fallback still applies.
+   * at least one eligible ACTIVE user (FR-004: scoped to the requester's
+   * contract); returns null when no role qualifies so the legacy routing
+   * fallback still applies.
    *
    * @param {string} requestType
+   * @param {string|null} [requesterId]
    * @returns {Promise<{ targetType: string, targetRoleId: string } | null>}
    */
-  async resolveDefaultTarget(requestType) {
+  async resolveDefaultTarget(requestType, requesterId = null) {
+    const contractTypeId = await this.resolveRequesterContract(requesterId);
     const eligibleRoles = await this.approvalConfigurationService.getEligibleRoles(requestType);
     const targetable = eligibleRoles
       .filter((role) => role.canBeTarget === true)
@@ -189,7 +219,8 @@ class ApprovalEngineService {
     for (const role of targetable) {
       const users = await this.approvalConfigurationService.getEligibleUsers(
         requestType,
-        role.roleId
+        role.roleId,
+        { contractTypeId }
       );
       if (users.length > 0) {
         return {
@@ -207,15 +238,15 @@ class ApprovalEngineService {
    * eligible role target. Returns null only when no target is supplied AND no
    * eligible role exists (legacy auto-routing applies).
    *
-   * @param {{ requestType: string, input: object }} params
+   * @param {{ requestType: string, input: object, requesterId?: string|null }} params
    */
-  async prepareSubmission({ requestType, input }) {
+  async prepareSubmission({ requestType, input, requesterId = null }) {
     if (input?.approvalTarget) {
-      return this.buildAssignment({ requestType, target: input.approvalTarget });
+      return this.buildAssignment({ requestType, target: input.approvalTarget, requesterId });
     }
-    const defaultTarget = await this.resolveDefaultTarget(requestType);
+    const defaultTarget = await this.resolveDefaultTarget(requestType, requesterId);
     if (defaultTarget) {
-      return this.buildAssignment({ requestType, target: defaultTarget });
+      return this.buildAssignment({ requestType, target: defaultTarget, requesterId });
     }
     return null;
   }
@@ -281,8 +312,15 @@ class ApprovalEngineService {
         "REQUEST_NOT_CLAIMABLE"
       );
     }
-    // Eligibility: the claimant must be an eligible approver for the type.
-    const eligibleUsers = await this.approvalConfigurationService.getEligibleUsers(request.type);
+    // Eligibility: the claimant must be an eligible approver for the type,
+    // scoped to the requester's contract (FR-004: same contract OR
+    // contract-less approvers can claim).
+    const contractTypeId = await this.resolveRequesterContract(request.requesterId);
+    const eligibleUsers = await this.approvalConfigurationService.getEligibleUsers(
+      request.type,
+      null,
+      { contractTypeId }
+    );
     if (!eligibleUsers.some((u) => String(u.userId) === String(userId))) {
       throw new PermissionDeniedError(`${request.type.toLowerCase()}:approve`);
     }

@@ -78,6 +78,28 @@ test("request.decided notifies the requester (A5)", async () => {
   assert.equal(decision.relatedRequestId, request.id);
 });
 
+test("FR-006: salary.slip_uploaded notifies the receiver with link /salary-slips", async () => {
+  const { service, fakes, eventBus } = makeService();
+  seed(fakes);
+
+  await eventBus.publish("salary.slip_uploaded", {
+    userId: "u_emp",
+    slipId: "slip_1",
+    periodLabel: "Juli 2026",
+    payDate: "2026-07-31T00:00:00Z",
+  });
+
+  const inbox = await service.list("u_emp", {});
+  const notice = inbox.items.find((n) => n.type === "salary.slip_uploaded");
+  assert.ok(notice, "receiver notified of the new slip");
+  assert.equal(notice.title, "Slip Gaji Baru");
+  assert.equal(notice.link, "/salary-slips");
+  assert.ok(notice.body.includes("Juli 2026"), "body mentions the period");
+
+  // No request context is required for this trigger.
+  assert.equal(notice.relatedRequestId, null);
+});
+
 test("preferences opt-out is honored for future events but mandatory types always deliver (A9)", async () => {
   const { service, fakes, eventBus } = makeService();
   seed(fakes);

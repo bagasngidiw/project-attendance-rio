@@ -40,7 +40,7 @@ class OvertimeService {
       await this.businessRuleService.enforceForType("overtime", input);
     }
     const approval = this.approvalEngine
-      ? await this.approvalEngine.prepareSubmission({ requestType: "OVERTIME", input })
+      ? await this.approvalEngine.prepareSubmission({ requestType: "OVERTIME", input, requesterId })
       : null;
     return this.requestService.submitRequest({
       type: "OVERTIME",

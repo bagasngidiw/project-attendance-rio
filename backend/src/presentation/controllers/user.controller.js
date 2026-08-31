@@ -38,12 +38,14 @@ class UserController {
   /** GET /users — paginated, searchable list (FR-029/FR-023). */
   list = async (req, res, next) => {
     try {
-      const { search, status, roleId, departmentId, page, pageSize } = req.query;
+      const { search, status, roleId, departmentId, contractTypeId, placementId, page, pageSize } = req.query;
       const data = await this.userAdminService.listUsers({
         search,
         status,
         roleId,
         departmentId,
+        contractTypeId,
+        placementId,
         page: page ? Number(page) : 1,
         pageSize: pageSize ? Number(pageSize) : 20,
       });

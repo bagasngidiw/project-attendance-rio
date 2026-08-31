@@ -94,6 +94,14 @@ function createConfig() {
         : require("path").join(process.cwd(), "attachment-assets");
     })(),
 
+    // FR-006: local disk directory for salary invoice slip files.
+    salaryAssetsDir: (() => {
+      const configured = readEnv("SALARY_ASSETS_DIR", "");
+      return configured
+        ? configured
+        : require("path").join(process.cwd(), "salary-assets");
+    })(),
+
     seed: {
       superAdminUsername: readEnv("SEED_SUPER_ADMIN_USERNAME", "superadmin"),
       superAdminEmail: readEnv("SEED_SUPER_ADMIN_EMAIL", "superadmin@corp.io"),

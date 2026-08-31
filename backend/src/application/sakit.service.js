@@ -45,7 +45,7 @@ class SakitService {
     }
 
     const approval = this.approvalEngine
-      ? await this.approvalEngine.prepareSubmission({ requestType: "SAKIT", input })
+      ? await this.approvalEngine.prepareSubmission({ requestType: "SAKIT", input, requesterId })
       : null;
 
     return this.requestService.submitRequest({

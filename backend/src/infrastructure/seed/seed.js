@@ -184,6 +184,8 @@ function ROLE_SEED_EMPLOYEE_PERMISSIONS() {
     "files:download",
     // FR-051: users manage their own MFA enrollment.
     "mfa:manage",
+    // FR-006: employees see/download their own salary slips.
+    "salary:view_own",
   ];
 }
 

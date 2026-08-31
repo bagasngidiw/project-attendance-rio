@@ -463,9 +463,11 @@ export function RequestForm({
           type={approvalTargetTypeFor(type)}
           value={approvalTarget}
           onChange={setApprovalTarget}
-          // FR-006/FIX: only Overtime keeps the Role option; Leave/Trip show
-          // only "Pilih Pengguna" (backend auto-resolves the default role).
-          allowRole={type === "OVERTIME"}
+          // All request forms (incl. Lembur) show only "Pilih Pengguna"; the
+          // backend auto-resolves the default eligible role when no user is
+          // picked. The ROLE radio option stays available in the component
+          // API for any future form that needs it.
+          allowRole={false}
         />
       </div>
 

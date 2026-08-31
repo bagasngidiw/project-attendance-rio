@@ -30,3 +30,20 @@ node_modules/
 dist/
 build/
 coverage/
+
+salary-assets/
+branding-assets/
+attachment-assets/
+attachment-media/
+
+# ============================================================
+# SECURITY: employee biometric media (selfies) — never commit
+# ============================================================
+attendance-media/
+
+# ============================================================
+# SECURITY: seed scripts containing deployment admin passwords —
+# run locally only, never commit/push
+# ============================================================
+scripts/seed-initial-production.js
+scripts/reset-and-seed-tad-simbika.js

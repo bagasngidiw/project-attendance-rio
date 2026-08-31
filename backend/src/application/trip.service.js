@@ -40,7 +40,7 @@ class TripService {
       await this.businessRuleService.enforceForType("trip", input);
     }
     const approval = this.approvalEngine
-      ? await this.approvalEngine.prepareSubmission({ requestType: "TRIP", input })
+      ? await this.approvalEngine.prepareSubmission({ requestType: "TRIP", input, requesterId })
       : null;
     return this.requestService.submitRequest({
       type: "TRIP",

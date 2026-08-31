@@ -94,6 +94,9 @@ const AUDIT_EVENTS = Object.freeze([
   "FILE.UPLOADED",
   "FILE.DOWNLOADED",
   "FILE.DELETED",
+  // Salary slips (FR-006)
+  "SALARY.UPLOADED",
+  "SALARY.DOWNLOADED",
   // Filter presets (FR-047)
   "FILTER_PRESET.CREATED",
   "FILTER_PRESET.UPDATED",

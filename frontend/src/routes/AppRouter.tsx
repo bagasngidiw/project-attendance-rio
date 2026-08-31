@@ -17,6 +17,7 @@ import BusinessTrip from "@/pages/BusinessTrip";
 import Leave from "@/pages/Leave";
 import Permission from "@/pages/Permission";
 import Sakit from "@/pages/Sakit";
+import SalarySlips from "@/pages/SalarySlips";
 import MyRequests from "@/pages/MyRequests";
 import Notifications from "@/pages/Notifications";
 import Users from "@/pages/Users";
@@ -161,6 +162,20 @@ export default function AppRouter() {
                   ]}
                 >
                   <Sakit />
+                </RequirePermission>
+              }
+            />
+
+            <Route
+              path={ROUTES.SALARY_SLIPS}
+              element={
+                <RequirePermission
+                  permission={[
+                    PERMISSIONS.SALARY_VIEW_OWN,
+                    PERMISSIONS.SALARY_MANAGE,
+                  ]}
+                >
+                  <SalarySlips />
                 </RequirePermission>
               }
             />

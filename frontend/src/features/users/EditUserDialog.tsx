@@ -9,14 +9,16 @@ import { useQuery } from "@tanstack/react-query";
 import { AxiosError } from "axios";
 
 import type { ApiEnvelope } from "@contracts/auth";
+import { PERMISSIONS } from "@contracts/permissions";
 
-import { leaveBalanceApi, usersApi } from "@/lib/axios";
+import { leaveBalanceApi, rbacAdminApi, usersApi } from "@/lib/axios";
 import { apiErrorMessage } from "@/lib/apiError";
 import { toast } from "@/lib/toast";
 import { Modal } from "@/components/ui/Modal";
 import { Input } from "@/components/ui/Input";
 import { Button } from "@/components/ui/Button";
 import { Spinner } from "@/components/ui/Spinner";
+import { Can } from "@/features/auth/Can";
 import { useLeaveTypeNames } from "@/features/requests/useLeaveTypeNames";
 import { ContractTypeSelect, PlacementSelect } from "@/features/admin/MasterSelects";
 
@@ -53,6 +55,30 @@ export function EditUserDialog({
   const [reason, setReason] = useState("");
   const [serverError, setServerError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
+  // FR-003: role chips — initialized from the user's current roles (same
+  // query key as CreateUserDialog so the role cache is shared).
+  const [selectedRoles, setSelectedRoles] = useState<Set<string>>(
+    new Set(user.roleIds ?? [])
+  );
+
+  const { data: roles } = useQuery({
+    queryKey: ["rbac-admin-roles"],
+    queryFn: () => rbacAdminApi.listRoles().then((r) => r.data.data ?? []),
+  });
+
+  function toggleRole(roleId: string) {
+    setSelectedRoles((prev) => {
+      const next = new Set(prev);
+      if (next.has(roleId)) next.delete(roleId);
+      else next.add(roleId);
+      return next;
+    });
+  }
+
+  const rolesChanged =
+    !readOnly &&
+    JSON.stringify([...selectedRoles].sort()) !==
+      JSON.stringify([...(user.roleIds ?? [])].sort());
 
   const { data: balances, isLoading: balancesLoading } = useQuery({
     queryKey: ["leave-balances", user.id],
@@ -95,6 +121,10 @@ export function EditUserDialog({
       setServerError("Alasan perubahan jatah cuti wajib diisi.");
       return;
     }
+    if (selectedRoles.size === 0) {
+      setServerError("Tetapkan minimal satu peran.");
+      return;
+    }
     setSubmitting(true);
     setServerError(null);
     try {
@@ -110,6 +140,11 @@ export function EditUserDialog({
         workingStartTime: quotaSchedule.workingStartTime,
         workingEndTime: quotaSchedule.workingEndTime,
       });
+      // FR-003: persist role changes via the existing RBAC endpoint
+      // (backend guards: users:assign_roles, last-SUPER_ADMIN, token bump).
+      if (rolesChanged) {
+        await rbacAdminApi.assignRoles(user.id, [...selectedRoles]);
+      }
       toast.success("Pengguna diperbarui.");
       onSaved();
     } catch (err) {
@@ -120,7 +155,9 @@ export function EditUserDialog({
             ? "Jatah cuti tidak dapat dikurangi karena sisa akan negatif."
             : body?.code === "USER_EXISTS"
               ? "Pengguna lain sudah memiliki email ini."
-              : "Tidak dapat memperbarui pengguna.")
+              : body?.code === "ROLE_DISABLED"
+                ? "Peran dinonaktifkan dan tidak dapat diberikan."
+                : "Tidak dapat memperbarui pengguna.")
       );
     } finally {
       setSubmitting(false);
@@ -166,6 +203,40 @@ export function EditUserDialog({
             disabled={readOnly}
           />
         </div>
+
+        {/* FR-003: role/peran editor — same checkbox-chip pattern as the
+            create dialog. Hidden in read-only mode and when the actor lacks
+            users:assign_roles so a 403 never surprises the user. */}
+        {!readOnly ? (
+          <Can permission={PERMISSIONS.USERS_ASSIGN_ROLES}>
+            <div>
+              <label className="mb-1.5 block text-sm font-medium text-slate-700">
+                Peran
+              </label>
+              <div className="flex flex-wrap gap-2">
+                {(roles ?? []).map((role) => (
+                  <label
+                    key={role.id}
+                    className="flex cursor-pointer items-center gap-1.5 rounded-lg border border-slate-200 px-2.5 py-1.5 text-sm has-checked:border-slate-900 has-checked:bg-slate-50"
+                  >
+                    <input
+                      type="checkbox"
+                      checked={selectedRoles.has(role.id)}
+                      onChange={() => toggleRole(role.id)}
+                      className="size-4 accent-slate-900"
+                    />
+                    {role.name}
+                  </label>
+                ))}
+              </div>
+              {rolesChanged ? (
+                <p className="mt-2 rounded-lg bg-indigo-50 px-3 py-2 text-xs text-indigo-800">
+                  Peran akan diperbarui saat menyimpan.
+                </p>
+              ) : null}
+            </div>
+          </Can>
+        ) : null}
 
         <div className="rounded-xl border border-slate-200 p-4">
           <h4 className="font-semibold">Jatah Cuti Saat Ini</h4>

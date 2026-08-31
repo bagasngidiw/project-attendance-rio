@@ -222,6 +222,10 @@ class InMemoryUserRepository {
       departmentId: user.departmentId ?? null,
       positionId: user.positionId ?? null,
       managerId: user.managerId ?? null,
+      // NEW UPDATE TAD SIMBIKA: contract/placement refs for FR-002/FR-004 tests.
+      nip: user.nip ?? "",
+      contractTypeId: user.contractTypeId ?? null,
+      placementId: user.placementId ?? null,
       roleIds: user.roleIds ?? [],
       workingDays: user.workingDays ?? [],
       workingStartTime: user.workingStartTime ?? "",
@@ -395,7 +399,7 @@ class InMemoryUserRepository {
     return user;
   }
 
-  async list({ search, status, departmentId, userIds, page = 1, pageSize = 20 } = {}) {
+  async list({ search, status, departmentId, userIds, contractTypeId, placementId, page = 1, pageSize = 20 } = {}) {
     if (userIds && userIds.length === 0) return { items: [], total: 0 };
     let items = [...this.users.values()];
     if (search && search.trim()) {
@@ -407,6 +411,13 @@ class InMemoryUserRepository {
     if (status) items = items.filter((u) => u.status === status);
     if (departmentId) {
       items = items.filter((u) => String(u.departmentId) === String(departmentId));
+    }
+    // NEW UPDATE TAD SIMBIKA: contract/placement master filters (FR-002).
+    if (contractTypeId) {
+      items = items.filter((u) => String(u.contractTypeId) === String(contractTypeId));
+    }
+    if (placementId) {
+      items = items.filter((u) => String(u.placementId) === String(placementId));
     }
     if (userIds && userIds.length) {
       const set = new Set(userIds.map(String));

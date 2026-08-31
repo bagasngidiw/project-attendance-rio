@@ -160,6 +160,21 @@ export function applyIdentity(identity: {
 
   const rawLogoUrl = identity.logo?.url ?? null;
 
+   // Dynamically update favicon
+  if (rawLogoUrl) {
+    let favicon = document.querySelector<HTMLLinkElement>(
+      'link[rel="icon"]'
+    );
+
+    if (!favicon) {
+      favicon = document.createElement("link");
+      favicon.rel = "icon";
+      document.head.appendChild(favicon);
+    }
+
+    favicon.href = rawLogoUrl;
+  }
+
   state = {
     ...state,
     applicationName,

@@ -12,6 +12,7 @@ const TITLES: Record<string, string> = {
   overtime: "Lembur",
   "business-trip": "Perjalanan Dinas",
   leave: "Cuti",
+  "salary-slips": "Slip Gaji",
   users: "Pengguna",
   reports: "Laporan",
   profile: "Profil",

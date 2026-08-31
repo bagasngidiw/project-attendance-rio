@@ -39,25 +39,25 @@ export default function UserDropdown() {
   }
 
   return (
-    <div className="relative">
+    <div className="relative shrink-0">
       <button
         onClick={() => setOpen((prev) => !prev)}
         aria-haspopup="menu"
         aria-expanded={open}
-        className="flex items-center gap-3 rounded-lg px-2 py-1.5 hover:bg-slate-50"
+        className="flex items-center gap-3 whitespace-nowrap rounded-lg px-2 py-1.5 hover:bg-slate-50"
       >
-        <div className="size-10 rounded-full bg-slate-300 flex items-center justify-center text-sm font-semibold text-slate-700">
+        <div className="size-10 shrink-0 rounded-full bg-slate-300 flex items-center justify-center text-sm font-semibold text-slate-700">
           {initials}
         </div>
 
-        <div className="text-left hidden sm:block">
-          <p className="font-medium leading-tight">{user.name}</p>
-          <p className="text-sm text-slate-500 leading-tight">
+        <div className="min-w-0 max-w-44 text-left hidden sm:block">
+          <p className="truncate font-medium leading-tight">{user.name}</p>
+          <p className="truncate text-sm text-slate-500 leading-tight">
             {(user.roles ?? []).join(", ")}
           </p>
         </div>
 
-        <ChevronDown size={16} className="text-slate-400" />
+        <ChevronDown size={16} className="shrink-0 text-slate-400" />
       </button>
 
       {open ? (

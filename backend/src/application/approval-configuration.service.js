@@ -153,10 +153,17 @@ class ApprovalConfigurationService {
    * Eligible users who may act for a request type (FR-003): ACTIVE users
    * holding an eligible role (optionally narrowed to one roleId).
    *
+   * FR-004 (contract scoping): when `opts.contractTypeId` is provided, only
+   * users from that contract OR users WITHOUT a contract are returned.
+   * Contract-less admins (e.g. admin_simbika, superadmin) act as general
+   * approvers for every contract so the flow never dead-ends. When omitted,
+   * behavior is identical to the original (all ACTIVE eligible users).
+   *
    * @param {string} requestType
    * @param {string} [roleId]
+   * @param {{ contractTypeId?: string|null }} [opts]
    */
-  async getEligibleUsers(requestType, roleId = null) {
+  async getEligibleUsers(requestType, roleId = null, opts = {}) {
     const eligibleRoles = await this.getEligibleRoles(requestType);
     if (eligibleRoles.length === 0) return [];
 
@@ -176,9 +183,18 @@ class ApprovalConfigurationService {
     const seen = new Set();
     const result = [];
 
+    // FR-004: same-contract OR contract-less approvers only.
+    const contractId = opts.contractTypeId ? String(opts.contractTypeId) : null;
+    const inScope = (uid) => {
+      if (!contractId) return true;
+      const user = usersById.get(uid);
+      return !user || !user.contractTypeId || String(user.contractTypeId) === contractId;
+    };
+
     for (const pair of pairs) {
       const uid = String(pair.userId);
       if (!activeIds.has(uid) || seen.has(uid)) continue;
+      if (!inScope(uid)) continue;
       const role = roleById.get(String(pair.roleId));
       if (!role) continue;
       seen.add(uid);

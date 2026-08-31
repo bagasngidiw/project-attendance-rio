@@ -401,9 +401,9 @@ class UserAdminService {
   /**
    * Paginated, searchable user list (FR-029/FR-023).
    *
-   * @param {{ search?: string, status?: string, roleId?: string, departmentId?: string, page?: number, pageSize?: number }} filters
+   * @param {{ search?: string, status?: string, roleId?: string, departmentId?: string, contractTypeId?: string, placementId?: string, page?: number, pageSize?: number }} filters
    */
-  async listUsers({ search, status, roleId, departmentId, page = 1, pageSize = 20 } = {}) {
+  async listUsers({ search, status, roleId, departmentId, contractTypeId, placementId, page = 1, pageSize = 20 } = {}) {
     let userIds;
     if (roleId) {
       userIds = await this.userRoleRepository.userIdsForRole(roleId);
@@ -414,6 +414,8 @@ class UserAdminService {
       status,
       departmentId,
       userIds,
+      contractTypeId,
+      placementId,
       page,
       pageSize,
     });

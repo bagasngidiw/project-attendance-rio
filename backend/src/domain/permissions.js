@@ -137,6 +137,14 @@ const PERMISSION_REGISTRY = Object.freeze({
     "sakit:review",
     "sakit:approve",
   ],
+
+  // FR-006: Slip Gaji (salary invoice slips). `salary:manage` is reserved for
+  // SUPER_ADMIN (uploads + full list); `salary:view_own` lets every employee
+  // see/download their own slips.
+  SALARY: [
+    "salary:manage",
+    "salary:view_own",
+  ],
 });
 
 /** Flat, deduplicated list of every registered permission key. */

@@ -34,7 +34,7 @@ class PermissionService {
   async submit({ requesterId, input, actor }) {
     validatePermissionPayload(input);
     const approval = this.approvalEngine
-      ? await this.approvalEngine.prepareSubmission({ requestType: "PERMISSION", input })
+      ? await this.approvalEngine.prepareSubmission({ requestType: "PERMISSION", input, requesterId })
       : null;
     return this.requestService.submitRequest({
       type: "PERMISSION",

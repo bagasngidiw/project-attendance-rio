@@ -20,6 +20,8 @@ const LINK_BY_TYPE = Object.freeze({
   "request.decided": "/my-requests",
   "request.cancelled": "/my-requests",
   "auth.password_reset": "/login",
+  // FR-006: salary-slip notifications open the receiver's slip list.
+  "salary.slip_uploaded": "/salary-slips",
 });
 
 class NotificationService {
@@ -99,6 +101,13 @@ class NotificationService {
     if (event === "auth.password_reset") {
       return { userId: payload.userId };
     }
+    // FR-006: salary slips carry their own recipient context (no request).
+    if (event === "salary.slip_uploaded") {
+      return {
+        userId: payload.userId,
+        periodLabel: payload.periodLabel ?? "",
+      };
+    }
     if (!payload.requestId) return null;
 
     const request = await this.requestRepository.findById(payload.requestId);
@@ -147,6 +156,8 @@ class NotificationService {
         return `A ${context.type} request was cancelled.`;
       case "auth.password_reset":
         return "Your password was reset by an administrator. Set a new one at next sign-in.";
+      case "salary.slip_uploaded":
+        return `Invoice slip gaji periode ${context.periodLabel} telah diunggah.`;
       default:
         return "";
     }
