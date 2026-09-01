@@ -16,13 +16,23 @@ function readNumber(name, defaultValue) {
 }
 
 function createConfig() {
+  const nodeEnv = readEnv("NODE_ENV", "development");
+  const isProduction = nodeEnv === "production";
+
+  // Strict check: Prevent production boot without critical environment variables
+  if (isProduction) {
+    if (!process.env.MONGO_URI) {
+      throw new Error("MONGO_URI environment variable is missing in production.");
+    }
+    if (!process.env.CORS_ORIGINS) {
+      throw new Error("CORS_ORIGINS environment variable is missing in production.");
+    }
+  }
+
   const config = {
     port: readNumber("PORT", 5000),
-    mongoUri: readEnv(
-      "MONGO_URI",
-      "mongodb+srv://bagasvanbacdim:AcC7uZly6oV1Av7i@hris-project.thgt0lt.mongodb.net/attendance_db"
-    ),
-    nodeEnv: readEnv("NODE_ENV", "development"),
+    mongoUri: readEnv("MONGO_URI", "mongodb://localhost:27017/attendance_db"),
+    nodeEnv,
 
     security: {
       jwtSecret: readEnv("JWT_SECRET", ""),
@@ -109,12 +119,12 @@ function createConfig() {
       // Demo roles/users/types/approval-configs are provisioned on boot.
       // Set SEED_DEMO_DATA=false to keep only the SUPER_ADMIN account + the
       // permission registry + role (clean-slate installs / production).
-      demoData: readEnv("SEED_DEMO_DATA", "true") === "true",
+      demoData: readEnv("SEED_DEMO_DATA", isProduction ? "false" : "true") === "true",
     },
   };
 
   if (!config.security.jwtSecret) {
-    if (config.nodeEnv === "production") {
+    if (isProduction) {
       throw new Error("JWT_SECRET is required in production.");
     }
     // Development-only fallback so the scaffold runs out of the box.

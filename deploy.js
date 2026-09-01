@@ -63,8 +63,13 @@ const PURGE_FILES = [
 // its own) + the local MongoDB data directory (never upload DB binaries) +
 // root-level scratch *.txt test-output files (dev artifacts) + local
 // provisioning scripts that embed deployment credentials.
+//
+// Note: minimatch's globstar (`**`) does NOT match dot-directories (e.g.
+// node_modules/.bin, node_modules/*/.github) unless `dot: true`, so the
+// explicit `**/.*` patterns below are required to exclude them.
 const BACKEND_EXCLUDES = [
   "node_modules/**", "node_modules/**/*",
+  "node_modules/**/.*", "node_modules/**/.*/**", "node_modules/**/.*/**/*",
   ".git/**", ".git/**/*",
   // Local MongoDB data — never upload database binaries to production.
   ".mongo-data/**", ".mongo-data/**/*",
@@ -86,6 +91,14 @@ const HTACCESS_CONTENT = `# React SPA — client-side routing (AUTO_DEPLOY_PROD.
 <IfModule mod_rewrite.c>
     RewriteEngine On
     RewriteBase /
+
+    # DO NOT rewrite requests starting with /backend
+    RewriteCond %{REQUEST_URI} ^/backend [NC]
+    RewriteRule ^ - [L]
+
+    # Same-origin API: /api/* -> Passenger backend mounted at /backend
+    RewriteRule ^api(/.*)?$ /backend/api$1 [L]
+
     RewriteRule ^index\\.html$ - [L]
     RewriteCond %{REQUEST_FILENAME} !-f
     RewriteCond %{REQUEST_FILENAME} !-d
@@ -178,12 +191,53 @@ async function withFtpClient(fn) {
   }
 }
 
+/**
+ * Removes a stale/conflicting remote entry (a FILE or an EMPTY directory)
+ * named `node_modules` under the backend root. A file or empty dir named
+ * node_modules (e.g. from a failed server-side `npm ci`) breaks both this
+ * deploy (mkdir "File exists") and a future `npm ci`. A node_modules with
+ * real content is never touched. Missing node_modules is a no-op.
+ */
+async function cleanupBackendNodeModules() {
+  const target = path.posix.join(config.backendRoot, "node_modules");
+  await withFtpClient(async (client) => {
+    let parentEntries;
+    try {
+      parentEntries = await client.list(config.backendRoot);
+    } catch (err) {
+      log(`cannot list backend root (${err.message})`);
+      return;
+    }
+    const nm = parentEntries.find((e) => e.name === "node_modules");
+    if (!nm) {
+      log("no remote node_modules to clean");
+      return;
+    }
+    if (nm.isDirectory) {
+      const inner = await client.list(target);
+      if (inner.length > 0) {
+        log("remote node_modules has content — leaving it untouched");
+        return;
+      }
+      await client.removeDir(target);
+      log("removed conflicting empty node_modules directory");
+    } else {
+      await client.remove(target);
+      log("removed conflicting node_modules file entry");
+    }
+  });
+}
+
 (async () => {
   log(`host=${config.host} backend=${config.backendRoot} front=${config.frontRoot}`);
 
   // 1) One-time legacy purge.
   log("purging legacy files...");
   await withFtpClient((client) => purgeLegacy(client, config.frontRoot));
+
+  // 1b) Remove a conflicting/stale remote node_modules (file or empty dir)
+  // so the backend sync and a later server-side npm ci can succeed.
+  await cleanupBackendNodeModules();
 
   // 2) Backend sync.
   log("syncing backend...");

@@ -4,7 +4,8 @@
  *
  * No business logic lives here — this file only assembles dependencies.
  */
-
+global.crypto = require('crypto');
+const path = require("path");
 const express = require("express");
 const cors = require("cors");
 require("dotenv").config();
@@ -585,15 +586,129 @@ function buildApp(config) {
   const app = express();
   app.disable("x-powered-by");
   app.use(securityHeaders);
-  app.use(
-    cors({
-      origin: config.security.corsOrigins,
-      credentials: true,
-    })
-  );
+  const corsOptions = {
+  origin: function (origin, callback) {
+    // Allow requests with no origin (like mobile apps or curl)
+    if (!origin) return callback(null, true);
+
+    const allowedOrigins = config.security.corsOrigins;
+    
+    // Clean origin strings just in case
+    const cleanOrigin = origin.replace(/\/+$/, '');
+    const isAllowed = allowedOrigins.some(o => o.replace(/\/+$/, '') === cleanOrigin);
+
+    if (isAllowed) {
+      callback(null, true);
+    } else {
+      callback(new Error('Not allowed by CORS'));
+    }
+  },
+  credentials: true,
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With'],
+};
+app.use(cors(corsOptions));
+// app.options('/(.*)', cors(corsOptions));
+// app.options('*', cors(corsOptions));
+  // app.use(
+  //   cors({
+  //     origin: config.security.corsOrigins,
+  //     credentials: true,
+  //   })
+  // );
   app.use(express.json({ limit: "1mb" }));
   // app.use(rateLimit);
   app.use(correlation);
+
+  // ── Static file directories (express.static) ────────────────────────────
+  // Resolved with the SAME env overrides as the LocalDiskStorage instances
+  // (logoStorage / attachmentStorage / salarySlipStorage / attendanceMediaStorage)
+  // so static serving always points at the exact directory the app writes to.
+  // Mounted BEFORE the /api/v1 routers and the catch-all 404 handler.
+  // const brandingAssetsDir = process.env.BRANDING_ASSETS_DIR || path.join(process.cwd(), "branding-assets");
+  // const attendanceMediaDir = process.env.ATTENDANCE_MEDIA_DIR || path.join(process.cwd(), "attendance-media");
+  // const attachmentAssetsDir = config.attachmentAssetsDir;
+  // const salaryAssetsDir = config.salaryAssetsDir;
+
+  // Replace process.cwd() with __dirname
+const brandingAssetsDir = process.env.BRANDING_ASSETS_DIR || path.join(__dirname, "branding-assets");
+const attendanceMediaDir = process.env.ATTENDANCE_MEDIA_DIR || path.join(__dirname, "attendance-media");
+const attachmentAssetsDir = config.attachmentAssetsDir || path.join(__dirname, "attachment-assets");
+const salaryAssetsDir = config.salaryAssetsDir || path.join(__dirname, "salary-assets");
+
+  // FR-002 — branding assets are public by design (logos for the login page).
+  // Direct filename GETs (e.g. logo-<ts>-<hex>.png) are served here; any other
+  // token falls through (fallthrough: true) to the existing public branding
+  // asset controller, so the controller route keeps working exactly as before.
+  app.use(
+    "/api/v1/platform/branding-assets",
+    express.static(brandingAssetsDir, {
+      index: false,
+      fallthrough: true,
+      maxAge: "1d",
+      setHeaders: (res) => res.setHeader("X-Content-Type-Options", "nosniff"),
+    })
+  );
+
+  // FR-003 — attendance media (selfies, PII) is NEVER public: this static
+  // mount runs behind the existing `authenticate` middleware. The frontend
+  // capability-token route (GET /attendance/media/<token>, no selfie_ prefix,
+  // no extension) never matches a stored file, so it falls through to the
+  // protected attendance controller (CSP headers + ATTENDANCE.MEDIA_VIEWED
+  // audit + attendance:view_own|view_all), which stays authoritative. This
+  // mount only serves direct filename GETs (selfie_<48hex>.png|jpg) to any
+  // authenticated user — an accepted, documented tradeoff because the stored
+  // filenames are unguessable capability tokens. POST (upload) is untouched.
+  app.use(
+    "/api/v1/attendance/media",
+    authenticate,
+    express.static(attendanceMediaDir, {
+      index: false,
+      fallthrough: true,
+      redirect: false,
+      setHeaders: (res) => {
+        res.setHeader("X-Content-Type-Options", "nosniff");
+        res.setHeader("Cache-Control", "private, no-store");
+      },
+    })
+  );
+
+  // FR-004 — attachments and salary slips. The frontend fetches these through
+  // DB-id download routes (GET /api/v1/attachments/:id/download and
+  // GET /api/v1/salary-slips/:id/download) which enforce authentication +
+  // request-scoped authorization (files:download / salary:view_own|salary:
+  // manage + ownership); those routes remain the primary, fully-authorized
+  // path. Per the operator's explicit override of the default (no static
+  // mount), the following gated mounts are added BEHIND `authenticate` under
+  // dedicated /files sub-prefixes that never collide with the download routes.
+  // NOT RECOMMENDED — exposes private documents to any authenticated user who
+  // knows the exact stored filename; the frontend does not use these URLs.
+  app.use(
+    "/api/v1/attachments/files",
+    authenticate,
+    express.static(attachmentAssetsDir, {
+      index: false,
+      fallthrough: true,
+      redirect: false,
+      setHeaders: (res) => {
+        res.setHeader("X-Content-Type-Options", "nosniff");
+        res.setHeader("Cache-Control", "private, no-store");
+      },
+    })
+  );
+  app.use(
+    "/api/v1/salary-slips/files",
+    authenticate,
+    express.static(salaryAssetsDir, {
+      index: false,
+      fallthrough: true,
+      redirect: false,
+      setHeaders: (res) => {
+        res.setHeader("X-Content-Type-Options", "nosniff");
+        res.setHeader("Cache-Control", "private, no-store");
+      },
+    })
+  );
 
   app.get("/health", (req, res) => res.json({ data: { status: "ok" } }));
 
@@ -709,17 +824,27 @@ async function start() {
     config,
   });
 
-  app.listen(config.port, () => {
-    console.log(`[server] HRIS API listening on port ${config.port} (${config.nodeEnv}).`);
+//   app.listen(config.port, () => {
+//     console.log(`[server] HRIS API listening on port ${config.port} (${config.nodeEnv}).`);
+//   });
+const listenPort = process.env.PORT || config.port || 5000;
+
+  app.listen(listenPort, () => {
+    console.log(`[server] HRIS API listening on ${listenPort} (${config.nodeEnv}).`);
   });
 }
 
 // Only auto-start when run directly (not when imported by tests).
-if (require.main === module) {
-  start().catch((err) => {
-    console.error("[server] Failed to start:", err);
-    process.exit(1);
-  });
-}
+// if (require.main === module) {
+//   start().catch((err) => {
+//     console.error("[server] Failed to start:", err);
+//     process.exit(1);
+//   });
+// }
+
+start().catch((err) => {
+  console.error("[server] Failed to start:", err);
+  process.exit(1);
+});
 
 module.exports = { buildApp, start };

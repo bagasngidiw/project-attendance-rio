@@ -198,7 +198,9 @@ export const api: AxiosInstance = axios.create({
   // baseURL: configuredApiBase ? `${configuredApiBase}/api/v1` : "/api/v1",
   // baseURL: "/api/v1",
   baseURL,
-  headers: { "Content-Type": "application/json", "ngrok-skip-browser-warning": "true", },
+  // headers: { "Content-Type": "application/json", "ngrok-skip-browser-warning": "true", },
+  // headers: { "Content-Type": "application/json", "ngrok-skip-browser-warning": "true", },
+  headers: { "Content-Type": "application/json" },
 });
 
 /**

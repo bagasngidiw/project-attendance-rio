@@ -1,12 +1,19 @@
+# DO NOT REMOVE. CLOUDLINUX PASSENGER CONFIGURATION BEGIN
+PassengerAppRoot "/home/simbika1/backend"
+PassengerBaseURI "/"
+PassengerNodejs "/home/simbika1/nodevenv/backend/20/bin/node"
+PassengerAppType node
+PassengerStartupFile server.js
+# DO NOT REMOVE. CLOUDLINUX PASSENGER CONFIGURATION END
+
 <IfModule mod_rewrite.c>
   RewriteEngine On
   RewriteBase /
 
-  # DO NOT rewrite requests starting with /backend
-  RewriteCond %{REQUEST_URI} ^/backend [NC]
-  RewriteRule ^ - [L]
+  # 1. Allow Passenger to handle ALL /api requests directly (including static assets)
+  RewriteRule ^api/(.*)$ - [L]
 
-  # SPA fallback to index.html for React routes
+  # 2. React SPA Fallback for regular web routes
   RewriteRule ^index\.html$ - [L]
   RewriteCond %{REQUEST_FILENAME} !-f
   RewriteCond %{REQUEST_FILENAME} !-d

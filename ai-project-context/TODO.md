@@ -4,45 +4,41 @@
 
 ### User Request
 
-(Indonesian, translated) — "Use the file `ai-project-context/NEWER ABSENSI SIMBIKA (PAKE INI).xlsx`. RESET ALL the databases, access my MONGO_URI env so I can reset my MongoDB cluster database and the local MongoDB Compass database — reset is fine, I want to start over. Create the MongoDB collections. Then create the data related to website access (roles, users, menus) with these rules:
+(English, verbatim intent) — "Inspect the codebase (router definitions, controller logic, Multer file storage configurations) to correctly expose static file directories in Express. Target directories in root: `attachment-assets`, `attendance-media`, `branding-assets`, `salary-assets`.
 
-1. Create roles **SUPERADMIN**, **ADMIN**, plus one role per value in column E **JABATAN** of the Excel file.
-2. **Superadmin** (username `superadmin`, password `SuperAdmin2026!23`, NOT temporary): can see everything; NIP/contract/placement left empty.
-3. **ADMIN** role → user `admin_simbika` (password `admin2026!23`, NOT temporary): menus Dashboard, Slip Gaji, Absensi, Lembur, Perjalanan Dinas, Izin, Sakit, Cuti, Pengguna, Laporan, Profil, Notifikasi — check ALL access features (view:all etc.; read the DB context so nothing is wrong). NIP/contract/placement empty.
-4. **JABATAN roles** (from column E) → employees (username from column D: `{Nama Pegawai}_2026`, password `{nama pegawai lowercase}2026`, NOT temporary, NIP from column C): Dashboard karyawan; Absensi/Lembur/Perjalanan Dinas/Izin/Sakit/Cuti (NOT all features — submit requests, upload files, view own data only); Permintaan Saya (own data); Profil (edit own personal data); Slip Gaji (own only).
-5. Master data **Kontrak** (column B) and **Penempatan** (column F), then assign Kontrak/Penempatan to employees (leave empty where the file has no placement).
-6. Master data **Tipe Sakit = Sakit Ringan**, **Tipe Cuti = Cuti Tahunan** flagged as quota-based (uses employee leave balance).
-7. For ALL users: **12 days of Cuti**, working hours **08:00–17:00**, working days **Mon–Fri**."
+1. Search where files are uploaded/retrieved for each domain (Attendance, Salary, Platform/Branding, Attachments).
+2. Identify the exact URL prefix expected by the frontend for each resource type under `/api/v1/`.
+3. Mount `express.static` for each directory matching its corresponding route prefix, using `path.join(__dirname, '<folder_name>')`.
+4. Ensure these `express.static` declarations are declared BEFORE any catch-all 404 or router fallbacks in `server.js` / application builder."
 
 ### Problem
 
-The MongoDB databases (Atlas cluster `hris-project/attendance_db` + local MongoDB Compass `attendance_db`) currently hold legacy/demo data. The customer needs a clean, production-like initial dataset driven entirely by the NEWER Excel file — with role-per-JABATAN granularity (not the previous single "PENGEMUDI" role), exact credentials, menu-based permission sets, master data (Kontrak/Penempatan/Cuti Tahunan/Sakit Ringan), and uniform schedule + 12-day leave quota.
+The backend currently has **zero `express.static` mounts** (`grep` for `express.static` across `backend/` returns no matches). All four local-disk directories are served exclusively through controllers in `backend/server.js` composition root:
 
-The existing untracked script `backend/scripts/seed-initial-production.js` was built for the OLD Excel file (`NEW UPDATE TAD SIMBIKA.xlsx`) and assumes a single PENGEMUDI role. It must be **superseded** by a new combined reset+seed script targeting the NEWER file with role-per-JABATAN creation.
+- `branding-assets` → public controller `GET /api/v1/platform/branding-assets/:token` (`createBrandingAssetRoutes`)
+- `attendance-media` → protected controller `GET /api/v1/attendance/media/:token` (`createAttendanceRoutes`, requires `authenticate` + `attendance:view_own|view_all` + CSP/nosniff headers + audit)
+- `attachment-assets` → protected controller `GET /api/v1/attachments/:id/download` (`createAttachmentRoutes`, requires `authenticate` + `files:download` + request-scoped service check)
+- `salary-assets` → protected controller `GET /api/v1/salary-slips/:id/download` (`createSalarySlipRoutes`, requires `authenticate` + `salary:view_own|salary:manage` + ownership check)
+
+The frontend does **not** use static-style file URLs for any of these — every asset is fetched through the authenticated/public controller routes above (verified in `frontend/src/lib/axios.ts` and feature components). The request is to add `express.static` mounts. The challenge: three of the four directories contain **private data** (attendance selfies = PII, request attachments, salary slips). Blindly mounting public `express.static` at their API prefixes would create security holes.
 
 ### Expected Result
 
-- Both `attendance_db` databases (cluster + local) are dropped and re-provisioned from scratch.
-- Collections are created by the app's existing Mongoose models + idempotent base seed.
-- Roles: `SUPER_ADMIN`, `ADMIN`, and one role per distinct JABATAN value from column E (33 after the documented typo merge; 34 if the alias is removed).
-- Users: `superadmin` (all permissions, password non-temporary, NIP/contract/placement empty), `admin_simbika` (ADMIN, listed menus, all access features checked), and 244 employees (NIP + kontrak + penempatan + JABATAN role; passwords non-temporary).
-- Master data: 19 Kontrak, 37 Penempatan, LeaveType `CUTI_TAHUNAN` (balance-based), SicknessType `SAKIT_RINGAN`.
-- Every user: `workingDays [1,2,3,4,5]`, `workingStartTime "08:00"`, `workingEndTime "17:00"`, Cuti Tahunan quota 12 (both `users.leaveQuotas` mirror and `leave_balances` entitlement).
-- Approval configurations: ADMIN eligible approver + selectable target for all 5 request types (LEAVE, OVERTIME, TRIP, PERMISSION, SAKIT), `selfApproval: false`.
-- Login works for superadmin, admin_simbika, and every employee.
+- `express.static` mounts added in `backend/server.js` for the directories where it is safe and correct, declared **before** every `/api/v1` router and the catch-all 404 handler (`createNotFoundHandler()`).
+- Existing controller routes keep working (static mounts use `fallthrough`, so misses continue to the routers; route shadowing avoided).
+- Private directories are NOT exposed publicly; where a static mount is added for a private directory it is placed **behind the existing `authenticate` middleware**, and the security tradeoff is documented.
+- Backend test suite still passes; manual curl verification confirms the exact behaviors.
 
 ### Issue Classification
 
-- Database Change (reset + re-provision)
-- Functional Change (RBAC roles, users, master data)
-- New Feature (initial-production data provisioning)
-- Security Change (non-temporary credentials, permission scoping)
+- Backend Change (Express static serving)
+- Security Change (static exposure must not bypass RBAC)
 
 ### Scope
 
-- **Backend data provisioning only.** One new script + an optional `.env` line. No application source-code changes.
-- Frontend, application services, routes, models, base seed (`seed.js`), permission registry (`permissions.js`), and contracts are **not modified**.
-- The working tree contains unrelated in-flight changes (salary-slips feature, approval tweaks, header responsiveness). They must remain untouched.
+- **Backend-only, single file:** `backend/server.js`.
+- No controller/route/service/model/frontend/contract changes.
+- No database changes. No new dependencies (`express.static` is built-in).
 
 ---
 
@@ -50,45 +46,54 @@ The existing untracked script `backend/scripts/seed-initial-production.js` was b
 
 ### Relevant Frontend
 
-- None directly; menu visibility is driven by backend permissions. Reference only: `frontend/src/constants/sidebar.ts` + `backend/src/domain/navigation-catalog.js` define the menu→permission map used to design the role permission sets (see Functional Requirements FR-003).
+- `frontend/src/lib/axios.ts` — the single axios client; every asset fetch uses controller URLs:
+  - `attendanceApi.uploadMedia` → `POST /api/v1/attendance/media`; `attendanceApi.getMedia(token)` → `GET /api/v1/attendance/media/:token` (blob) — line ~765-773.
+  - `brandingApi.public()` → `GET /api/v1/platform/branding`; logo URL comes from the payload (`logo.url = /api/v1/platform/branding-assets/<key>`) fetched via `fetchBlobObjectUrl` — `lib/branding.ts:101,247`.
+  - `attachmentApi.downloadUrl(id)` → `/attachments/:id/download` — line ~707.
+  - `salarySlipApi.downloadUrl(id)` → `/salary-slips/:id/download` — line ~895.
+- Feature consumers: `features/attendance/AttendanceDetailDialog.tsx` (extracts token from `mediaRef`), `features/attendance/AttendanceVerificationPanel.tsx` + `useAttendanceVerification.ts` (mediaRef round-trip), `features/salary-slips/*` and `features/requests/*` (download links).
+- **No frontend change is needed or desired** — the static mounts are additive and must not change the URLs the frontend already uses.
 
 ### Relevant Backend
 
-- `backend/server.js` — composition root; mounts all routes and runs the idempotent base `seedDatabase(...)` on boot (`server.js:608-620`).
-- `backend/src/infrastructure/seed/seed.js` — base seed. With `SEED_DEMO_DATA=false` (current `.env`) it seeds ONLY: permission registry, `SUPER_ADMIN` role (all permissions), superadmin user (created with `mustChangePassword: true`), and the `roleIds` backfill. It does **not** create demo roles, system leave/sickness types, or approval configs. It never overwrites existing users' passwords.
-- `backend/src/infrastructure/config.js` — `config.mongoUri` (defaults to the Atlas URI), `config.seed.*`.
-- `backend/.env` — `MONGO_URI=mongodb+srv://bagasvanbacdim:AcC7uZly6oV1Av7i@hris-project.thgt0lt.mongodb.net/attendance_db` (cluster); commented `# MONGO_URI_LOCAL=mongodb://127.0.0.1:27017/attendance_db`; `SEED_SUPER_ADMIN_PASSWORD=SuperAdmin2026!23`; `SEED_DEMO_DATA=false`.
-- `backend/scripts/reset-database.js` — destructive reset reference (drops the ENTIRE database then seeds minimal SUPER_ADMIN). Reusable pattern; do NOT modify this tracked file.
-- `backend/scripts/seed-initial-production.js` — **untracked**, targets the OLD Excel, PENGEMUDI-only. Superseded by the new script; leave in place or delete after verification (do not modify).
-- Models (all in `backend/src/infrastructure/models/`): `user.model.js` (fields `nip`, `contractTypeId`, `placementId`, `roleIds`, `workingDays`, `workingStartTime/EndTime`, `leaveQuotas[]`), `role.model.js` (`key`/`name`/`description`/`isSystem`/`status`/`level`/`levelLabel`/`dataScope`/`version`), `permission.model.js`, `contract-type.model.js` (`key`/`name`/`status`), `placement.model.js`, `leave-type.model.js` (`isBalanceBased`), `sickness-type.model.js`, `leave-balance.model.js` (unique `{userId, leaveTypeId, year}`).
-- Repositories: `backend/src/infrastructure/repositories/user.repository.js` (`findByUsername`, `create`, `upsertLeaveQuota`), `user-role.repository.js` (`replaceRolesForUser`), `permission.repository.js` (`assignToRole`), `role.repository.js` (`findByKey`, `create`), `leave-type.repository.js` (`findByKey`, `create`), `sickness-type.repository.js` (`findByKey`, `create`), `approval-configuration.repository.js` (`getByType`, `upsert`), `contract-type.repository.js` / `placement.repository.js`.
-- Password hashing: `backend/src/infrastructure/password-hasher.js` (`BcryptPasswordHasher`).
-- Domain constants: `backend/src/domain/permissions.js` (`PERMISSION_REGISTRY`, `ALL_PERMISSIONS`, `assertRegisteredPermission`), `backend/src/domain/approval-configuration.js` (`CONFIG_REQUEST_TYPES` = LEAVE/OVERTIME/TRIP/PERMISSION/SAKIT), `backend/src/domain/contract-type.js` + `placement.js` (key regex `/^[A-Z][A-Z0-9_]*$/`), `backend/src/domain/model.js` `validateRoleInput` (key regex `/^[A-Z][A-Z0-9_]*$/`).
+- `backend/server.js` (759 lines) — the Express composition root. Key facts:
+  - Storage instances: `logoStorage` (line 224, dir = `process.env.BRANDING_ASSETS_DIR || path.join(process.cwd(), "branding-assets")`), `attachmentStorage` (line 426, dir = `config.attachmentAssetsDir` → `ATTACHMENT_ASSETS_DIR || path.join(process.cwd(), "attachment-assets")`), `salarySlipStorage` (line 441, dir = `config.salaryAssetsDir` → `SALARY_ASSETS_DIR || path.join(process.cwd(), "salary-assets")`), `attendanceMediaStorage` (line 568, dir = `process.env.ATTENDANCE_MEDIA_DIR || path.join(process.cwd(), "attendance-media")`).
+  - Global middleware order: `securityHeaders` (587) → `cors` (609) → `express.json` (618) → `correlation` (620) → `/health` (622) → all `/api/v1` routers (624-696) → `createNotFoundHandler()` (698) → `createErrorHandler()` (699).
+  - `authenticate`/`authorize` middleware constructed at lines 526-532 (before app assembly — available for use in static mounts).
+  - `require("path")` is used inline (lines 225, 570); no top-level `const path = require("path")` — the static block should introduce one or reuse inline.
+- `backend/src/infrastructure/storage/local-disk.storage.js` — sandboxed key→file storage; files are stored **flat** in each directory with keys:
+  - `branding-assets`: `logo-<Date.now()>-<12 hex>.<ext>` (`branding.service.js:139`)
+  - `attendance-media`: `selfie_<48 hex>.png|jpg` (`attendance.controller.js:72-74`)
+  - `attachment-assets`: `<uuid>-<sanitized basename>` (`domain/attachment.js:59-63` `sanitizeStoredName`)
+  - `salary-assets`: `slip-<32 hex><ext>` (`salary-slip.service.js:79`)
+- Controllers that currently serve files: `attendance.controller.js` (`uploadMedia`/`getMedia`), `branding.controller.js` (`getAsset`), `attachment.controller.js` (`download`), `salary-slip.controller.js` (`download`).
 
 ### Relevant Database
 
-- Cluster: `attendance_db` on Atlas cluster `hris-project` (via `MONGO_URI` in `.env`).
-- Local: `attendance_db` on `mongodb://127.0.0.1:27017` (MongoDB Compass / local mongod; currently commented as `MONGO_URI_LOCAL`).
-- Collections are created automatically by Mongoose models + the base seed (e.g. `users`, `roles`, `permissions`, `role_permissions`, `user_roles`, `contract_types`, `placements`, `leave_types`, `sickness_types`, `leave_balances`, `approval_configurations`). See `ai-project-context/DATABASE-INITIALIZATION.md` for the verified collection inventory.
-- The seed writes direct model/repository documents (bypasses service-level validation/policy on purpose, per the established `seed-initial-production.js` pattern).
+- None. Files live on local disk; the DB stores metadata (`mediaRef`, attachment `key`, salary `storageKey`) only.
 
 ### Relevant API
 
-- No API contract changes. After seeding, these must work: `POST /api/v1/auth/signin` (all users), `GET /api/v1/navigation` (permission-filtered menus), `GET /api/v1/rbac/roles`, `GET /api/v1/approval-targets?type=...`, `GET /api/v1/leave/types`, `GET /api/v1/sickness/types`.
+- Existing endpoints are unchanged and must remain reachable:
+  - `GET /api/v1/platform/branding-assets/:token` (public)
+  - `GET /api/v1/attendance/media/:token` (protected)
+  - `GET /api/v1/attachments/:id/download` (protected)
+  - `GET /api/v1/salary-slips/:id/download` (protected)
+- New additive behavior: direct static file GETs under the new mounts (see FRs).
 
 ### Relevant Authentication
 
-- JWT + session flow unchanged. After a reset, all `sessions`/`refresh_tokens` are wiped → every user must sign in fresh. `mustChangePassword=false` for all seeded users (per request — passwords are NOT temporary).
+- `authenticate` (JWT + session + tokenVersion) is the existing gate. The attendance-media static mount (FR-003) must run behind `authenticate` so unauthenticated requests to the mount still 401.
 
 ### Relevant Authorization / RBAC
 
-- Roles → permissions via `role_permissions`; users → roles via `user_roles` (+ `users.roleIds` mirror backfilled by `seedDatabase` and kept in sync by `replaceRolesForUser`).
-- Permission registry is the single source of truth; every key referenced below is verified registered in `backend/src/domain/permissions.js`.
-- Menu mapping (from `navigation-catalog.js` / `sidebar.ts`): Dasbor=`dashboard:view`; Permintaan Saya=`*:view_own` (leave/overtime/trip/sakit); Notifikasi=`dashboard:view`; Absensi=`attendance:*`; Lembur=`overtime:*`; Perjalanan Dinas=`trip:*`; Slip Gaji=`salary:view_own|salary:manage`; Cuti=`leave:*`; Ijin=`permission:*`; Sakit=`sakit:*`; Pengguna=`users:view`; Persetujuan=`*:approve`; Laporan=`reporting:view`; Profil=`profile:view`.
+- Attendance media: currently `authorize("attendance:view_own", "attendance:view_all")` on the controller route. The static mount (FR-003) will only require `authenticate` — **any authenticated user** could fetch a file whose exact filename they know. This is a documented, accepted tradeoff for this task (filenames are 48-hex unguessable capability tokens); the controller route remains the primary, fully-authorized path.
+- Branding: public by design — no RBAC.
+- Attachments/salary: **must NOT be exposed publicly** (FR-004 analysis).
 
 ### Relevant Navigation
 
-- Menu visibility is permission-driven (server `GET /api/v1/navigation`). Granting the permission sets in FR-003 yields exactly the requested menus.
+- None.
 
 ---
 
@@ -96,108 +101,30 @@ The existing untracked script `backend/scripts/seed-initial-production.js` was b
 
 | Area | Status | Impact |
 |------|--------|--------|
-| Frontend | Not Affected | No frontend changes; menu visibility follows seeded permissions |
-| Backend | Affected | ONE new provisioning script `backend/scripts/reset-and-seed-tad-simbika.js`; optional `backend/.env` line; no application code changes |
-| Database | Affected | Destructive reset + re-seed of TWO databases (cluster + local), explicitly authorized by the user |
-| API | Not Affected | No endpoint/contract changes |
-| Authentication | Potentially Affected | All sessions/tokens invalidated by the reset (expected — users must re-login) |
-| Authorization / RBAC | Affected | New roles (ADMIN + 33 JABATAN roles) and their permission sets; SUPER_ADMIN unchanged |
-| Navigation | Affected | Menu trees change as a result of new role permissions (intended) |
-| UI/UX | Not Affected | No UI code changes |
-| Business Logic | Not Affected | Application services untouched |
-| Validation | Not Affected | Seed bypasses service validation deliberately (same as existing pattern); seeded keys are sanitized to satisfy domain key regexes |
-| File Storage | Not Affected | No file operations |
-| Notifications | Not Affected | No notification data seeded |
-| Reports | Not Affected | No report data seeded |
-| Audit Logs | Affected | `audit_events` wiped by the reset; hash chain restarts (expected; `AUDIT_CHAIN_SALT` unchanged) |
-| Performance | Not Affected | One-time provisioning |
-| Testing | Potentially Affected | Backend test suite must still pass (script is standalone and not imported by tests) |
+| Frontend | Not Affected | No frontend code changes; existing controller URLs keep working |
+| Backend | Affected | `backend/server.js` only — static mounts + directory resolution |
+| Database | Not Affected | No schema/data changes |
+| API | Potentially Affected | Additive static GET endpoints; existing routes preserved via `fallthrough` |
+| Authentication | Affected | Attendance-media static mount requires `authenticate` |
+| Authorization / RBAC | Potentially Affected | Static mount for attendance media relaxes per-route authorization to any authenticated user (documented tradeoff); attachments/salary remain controller-protected (FR-004) |
+| Navigation | Not Affected | — |
+| UI/UX | Not Affected | — |
+| Business Logic | Not Affected | Services untouched |
+| Validation | Not Affected | — |
+| File Storage | Affected | Static serving of the four local-disk directories is the entire point of this change |
+| Notifications | Not Affected | — |
+| Reports | Not Affected | — |
+| Audit Logs | Potentially Affected | Direct static GETs of attendance media bypass the `ATTENDANCE.MEDIA_VIEWED` audit that the controller performs (documented in FR-003) |
+| Performance | Not Affected | `express.static` is the standard high-performance static path |
+| Testing | Potentially Affected | Backend suite must still pass; add manual curl checks (no new test files required) |
 
 ---
 
 ## Functional Requirements
 
-### FR-001: Create the combined reset + seed script and reset both databases
+### FR-001: Add shared static-directory resolution and the static mount block in `server.js`
 
-**Type:** Backend / Database / Script
-
-**Priority:** High
-
-**Status:** Implemented
-
-#### Implementation Notes
-
-Created `backend/scripts/reset-and-seed-tad-simbika.js` (the single deliverable script) and activated `MONGO_URI_LOCAL=mongodb://127.0.0.1:27017/attendance_db` in `backend/.env` (the only allowed env edit).
-
-- `--yes` / `RESET_CONFIRM=yes` gate verified: without it the script prints an abort message and exits 1 before connecting to any DB.
-- With `--yes`, the script drops + re-seeds the cluster (`config.mongoUri`) first, then the local target (`MONGO_URI_LOCAL`), and exits 0.
-- Sanitized logging only: `host` + database name + counts. No run output contained the `MONGO_URI`, any password, or any hash (verified in the full run log).
-- Seed sections are idempotent by construction (`findByKey`/`create`, `findByUsername`/create-or-update, `assignToRole` add-only upsert, leave-balance create-if-missing, approval-config create-if-missing).
-
-#### Developer Note (Atlas dropDatabase restriction)
-
-The Atlas application user (`bagasvanbacdim`) is **not** permitted to run `dropDatabase` ("user is not allowed to do action [dropDatabase]"). A probe confirmed the user CAN drop individual collections (`dropCollection`). The script therefore implements `dropDatabaseResilient()`: it attempts `dropDatabase()` and, when unauthorized, falls back to dropping each collection individually (verified — cluster reset completed via the fallback). This preserves the "drop + reseed from scratch" intent on Atlas app-user credentials.
-
-**Description:**
-Create `backend/scripts/reset-and-seed-tad-simbika.js` — a single, self-contained, destructive-but-gated provisioning script that (1) resets BOTH databases (Atlas cluster + local MongoDB Compass) and (2) seeds the complete initial dataset defined by FR-002 through FR-006. Add the `MONGO_URI_LOCAL` line to `backend/.env` so the local target is explicit.
-
-**Acceptance Criteria:**
-- [x] `node scripts/reset-and-seed-tad-simbika.js` (no `--yes`) prints an abort message and exits 1 without touching any DB.
-- [x] `node scripts/reset-and-seed-tad-simbika.js --yes` connects to the cluster, drops `attendance_db`, seeds it, disconnects; then connects to the local `attendance_db`, drops it, seeds it, disconnects. *(Cluster drop used the per-collection fallback — see Developer Note.)*
-- [x] No run output contains the `MONGO_URI` string, any password, or any password hash.
-- [x] `backend/.env` contains an active `MONGO_URI_LOCAL=mongodb://127.0.0.1:27017/attendance_db` line.
-- [x] Re-running the script's seed sections (without `--yes` if already seeded) does not duplicate roles/users/master data. *(Seed sections are idempotent by construction — find/create + add-only upserts.)*
-
-**Current Behavior:**
-- The cluster (`attendance_db`) holds legacy data; the local Compass DB may or may not exist. `npm run db:reset` only resets the single `MONGO_URI` target and seeds only SUPER_ADMIN. The untracked `seed-initial-production.js` targets the old Excel and PENGEMUDI-only roles.
-
-**Expected Behavior:**
-- One command (`node scripts/reset-and-seed-tad-simbika.js --yes`) drops and re-seeds BOTH targets.
-- Targets:
-  - Cluster: `config.mongoUri` (= `backend/.env` `MONGO_URI`, `mongodb+srv://.../attendance_db`).
-  - Local: `process.env.MONGO_URI_LOCAL || "mongodb://127.0.0.1:27017/attendance_db"`.
-- The script refuses to run without `--yes` (or `RESET_CONFIRM=yes`) and prints sanitized target info (host + database name only — never the URI string, never credentials, never password hashes, never plaintext passwords).
-- `backend/.env` gains an active `MONGO_URI_LOCAL=mongodb://127.0.0.1:27017/attendance_db` line (uncomment/rewrite the existing commented line).
-
-**Affected Files:**
-- `backend/scripts/reset-and-seed-tad-simbika.js` (NEW)
-- `backend/.env` (add/activate `MONGO_URI_LOCAL` — the only allowed env edit; user explicitly authorized env/config access)
-
-**Implementation Instructions:**
-1. Header comment: purpose, SECURITY rules (never print URI/passwords/hashes), usage `node scripts/reset-and-seed-tad-simbika.js --yes`, destructive warning.
-2. `require("dotenv").config()`; `const { createConfig } = require("../src/infrastructure/config")`; `const { buildApp } = require("../server")`; `const { seedDatabase } = require("../src/infrastructure/seed/seed")`; `const { BcryptPasswordHasher } = require("../src/infrastructure/password-hasher")`.
-3. Gate: `const confirmed = process.argv.includes("--yes") || process.env.RESET_CONFIRM === "yes"; if (!confirmed) { console.error("[reset] ABORT: pass --yes ..."); process.exit(1); }`
-4. Define `const TARGETS = [{ label: "cluster", uri: config.mongoUri }, { label: "local", uri: process.env.MONGO_URI_LOCAL || "mongodb://127.0.0.1:27017/attendance_db" }]`. Sanitized logging: parse the URI (e.g. `new URL(uri)`) and print `host` + pathname db name only.
-5. For each target, run `async function resetAndSeed(uri)`:
-   a. `await mongoose.connect(uri, { serverSelectionTimeoutMS: 8000 })`.
-   b. `await mongoose.connection.dropDatabase()`; log collection count before drop (sanitized names only).
-   c. Call the FR-002..FR-006 seeding steps (implemented in the same script) using `buildApp(config).repositories` + `new BcryptPasswordHasher(config.security.bcryptRounds)`.
-   d. `await mongoose.disconnect()`.
-6. Wrap the whole run in a `try/catch` that prints a sanitized error (`err.message`) and `process.exit(1)`; on a local-target connection failure (e.g. local mongod not running), print an actionable message ("start MongoDB Compass / local mongod at 127.0.0.1:27017") and exit non-zero AFTER the cluster target completes (cluster first, then local).
-7. The seed sections themselves must be **idempotent** (safe to re-run without `--yes` on an already-seeded DB), matching the existing `seed-initial-production.js` upsert patterns.
-
-**Dependencies:**
-- FR-002..FR-006 (the sections this script orchestrates).
-- `exceljs` is already installed in `backend/node_modules` (used by the old script).
-
-**Must Preserve:**
-- `backend/scripts/reset-database.js` (tracked, generic) — do not modify.
-- `backend/src/infrastructure/seed/seed.js` — do not modify; call it as-is with `demoData: false`.
-- All application source code, frontend, contracts, tests.
-- Never print secrets.
-
-**Acceptance Criteria:**
-- [ ] `node scripts/reset-and-seed-tad-simbika.js` (no `--yes`) prints an abort message and exits 1 without touching any DB.
-- [ ] `node scripts/reset-and-seed-tad-simbika.js --yes` connects to the cluster, drops `attendance_db`, seeds it, disconnects; then connects to the local `attendance_db`, drops it, seeds it, disconnects.
-- [ ] No run output contains the `MONGO_URI` string, any password, or any password hash.
-- [ ] `backend/.env` contains an active `MONGO_URI_LOCAL=mongodb://127.0.0.1:27017/attendance_db` line.
-- [ ] Re-running the script's seed sections (without `--yes` if already seeded) does not duplicate roles/users/master data.
-
----
-
-### FR-002: Read the NEWER Excel file and seed master data (Kontrak, Penempatan, Cuti Tahunan, Sakit Ringan)
-
-**Type:** Backend / Script (data ingestion)
+**Type:** Backend
 
 **Priority:** High
 
@@ -205,66 +132,66 @@ Create `backend/scripts/reset-and-seed-tad-simbika.js` — a single, self-contai
 
 #### Implementation Notes
 
-Implemented as a section of `backend/scripts/reset-and-seed-tad-simbika.js`.
+Implemented in `backend/server.js` (the only file touched, per scope):
 
-- `readExcelRows()` reads the `PEGAWAI` worksheet (columns 2/3/4/5/6), uses a robust `cellText()` helper (plain/rich-text/hyperlink cells), skips empty names, and **dedupes by NIP keeping the first occurrence** (RICO HERDIANSYAH's second row, which carries a unique "(SPR)" contract name, is dropped from the user set).
-- `sanitizeKey()` verified: all 33 JABATAN / 19 Kontrak / 37 Penempatan keys are unique and match `/^[A-Z][A-Z0-9_]*$/`.
-- `JABATAN_ALIASES = { "ENGINERING ON SITE": "ENGINEERING ON SITE" }` → 33 JABATAN roles (verified; removing the map yields 34).
-
-#### Developer Note (19 vs 18 Kontrak)
-
-The spec's "distinct Kontrak = 19" and "RICO appears exactly once" are both honored: **master data** (contract_types/placements) derives from ALL 245 sheet rows (19 distinct column B values, 37 column F values), while **users** derive from the 244 deduped rows. RICO's duplicated second row is the only row carrying the unique contract *"Pengadaan Layanan Mengemudikan Kendaraan PLN Icon Plus Kantor Pusat Tahun 2024 (SPR)"*; no employee references it, so creating all 19 contract types is safe and matches the acceptance criterion exactly.
+- Added `const path = require("path");` at the top-level requires (line 8).
+- Inserted the static block between `app.use(correlation)` and `app.get("/health", ...)`, resolving the four directories with the SAME env-override expressions as the storage instances (`logoStorage`, `attendanceMediaStorage`, `attachmentStorage`, `salarySlipStorage`):
+  - `brandingAssetsDir = process.env.BRANDING_ASSETS_DIR || path.join(process.cwd(), "branding-assets")`
+  - `attendanceMediaDir = process.env.ATTENDANCE_MEDIA_DIR || path.join(process.cwd(), "attendance-media")`
+  - `attachmentAssetsDir = config.attachmentAssetsDir`
+  - `salaryAssetsDir = config.salaryAssetsDir`
+- Mount order preserved: `securityHeaders → cors → json → correlation → static → health → routers → 404 → error`.
 
 **Description:**
-Ingest `ai-project-context/NEWER ABSENSI SIMBIKA (PAKE INI).xlsx` (worksheet `PEGAWAI`) with `exceljs`, read columns B (Kontrak), C (NIP), D (Nama Pegawai), E (JABATAN), F (Penempatan), and seed master data: 19 ContractType, 37 Placement, LeaveType `CUTI_TAHUNAN` (balance-based), SicknessType `SAKIT_RINGAN`.
+Introduce a single static-mount block in `buildApp` (inside `backend/server.js`) that (1) resolves the four directories using the SAME expressions the storage instances use (env override → `path.join(process.cwd(), "<folder>")`), and (2) registers the static mounts from FR-002/FR-003/FR-004. The block is placed AFTER the global middleware (`securityHeaders` → `cors` → `express.json` → `correlation`) and BEFORE the `/health` route and every `/api/v1` router — satisfying "declared BEFORE any catch-all 404 or router fallbacks".
 
 **Current Behavior:**
-- The old script reads columns 2/3/4/6 only, ignores column 5 (JABATAN), and points at the old file.
-- System leave/sickness types are not created when `SEED_DEMO_DATA=false`.
+- No static mounts exist; all `/api/v1` routers run, then `createNotFoundHandler()` (404) and `createErrorHandler()`.
 
 **Expected Behavior:**
-- Verified source data (already extracted during design): **245 data rows → 244 unique NIPs**; distinct JABATAN = 34 values; distinct Kontrak = 19; distinct Penempatan = 37; 2 rows with empty penempatan; duplicate NIP `002500942990SIM` (RICO HERDIANSYAH) appears twice.
-- Excel reader: sheet `PEGAWAI`, iterate rows 2..rowCount, skip rows with empty column D; read raw cells as strings; skip a row when its NIP was already seen (dedupe → RICO's second row is dropped).
-- Master data seeding:
-  - `ContractTypeModel` (or `contractTypeRepository`) per distinct column B value: `key = sanitizeKey(name)`, `name = raw`, `description = ""`, `status = "ACTIVE"`.
-  - `PlacementModel` per distinct column F value: same pattern. Empty penempatan rows simply have no placement link (user placement stays null).
-  - `LeaveType` `CUTI_TAHUNAN` name `Cuti Tahunan`, `isBalanceBased: true`, `status: "ACTIVE"`, `isSystem: false` (create only when missing — repository `findByKey` then `create`).
-  - `SicknessType` `SAKIT_RINGAN` name `Sakit Ringan`, `status: "ACTIVE"`, `isSystem: false` (create only when missing).
-- **Key sanitizer** (used for role/contract/placement keys): `sanitizeKey(value)` = trim → uppercase → replace every character not in `[A-Z0-9]` with `_` → collapse consecutive `_` → strip leading/trailing `_`. Must always satisfy `/^[A-Z][A-Z0-9_]*$/`. Examples: `"OPERATION & TECHNOLOGY"` → `OPERATION_TECHNOLOGY`; `"ICON + MAMPANG"` → `ICON_MAMPANG`; `"STAF AHLI DIREKSI SENIOR 1"` → `STAF_AHLI_DIREKSI_SENIOR_1`; `"EOS DISKOMINFO BANYUWANGI"` → `EOS_DISKOMINFO_BANYUWANGI`.
-- `EXCEL_PATH = "C:/Attendance System/ai-project-context/NEWER ABSENSI SIMBIKA (PAKE INI).xlsx"` (the file confirmed to exist). Read via the old script's copy-to-temp fallback for the `~$` Excel-lock case.
+- A clearly-commented block between `app.use(correlation)` (line 620) and `app.get("/health", ...)` (line 622) containing the static mounts.
+- Directory constants resolve identically to the storage instances:
+  - `brandingAssetsDir = process.env.BRANDING_ASSETS_DIR || path.join(process.cwd(), "branding-assets")`
+  - `attendanceMediaDir = process.env.ATTENDANCE_MEDIA_DIR || path.join(process.cwd(), "attendance-media")`
+  - `attachmentAssetsDir = config.attachmentAssetsDir` (already `ATTACHMENT_ASSETS_DIR || path.join(process.cwd(), "attachment-assets")` in `config.js`)
+  - `salaryAssetsDir = config.salaryAssetsDir` (already `SALARY_ASSETS_DIR || path.join(process.cwd(), "salary-assets")` in `config.js`)
+- Add `const path = require("path");` at the top of `server.js` (near line 7-10) so the block can use `path.join(__dirname, ...)` / `path.join(process.cwd(), ...)` without repeating inline requires.
 
 **Affected Files:**
-- `backend/scripts/reset-and-seed-tad-simbika.js` (NEW — this FR is a section of it)
+- `backend/server.js`
 
 **Implementation Instructions:**
-1. Implement `readExcelRows(filePath)` → array of `{ no, contractName, nip, name, jabatan, placementName }` (skip empty names, dedupe by NIP; keep the FIRST occurrence when a NIP repeats).
-2. Implement `sanitizeKey(value)` as specified; add `const JABATAN_ALIASES = { "ENGINERING ON SITE": "ENGINEERING ON SITE" }` and apply it to `jabatan` before key generation (typo normalization — see Edge Cases; removing the map yields 34 roles instead of 33).
-3. Implement `seedMasterData({ repositories, excelRows })`: distinct contract names → ContractType upserts (map sanitized key → id); distinct placement names → Placement upserts; leave-type `CUTI_TAHUNAN` upsert; sickness-type `SAKIT_RINGAN` upsert. Return `{ contractIdByKey, placementIdByKey, cutiTahunan, sakitRingan }`.
-4. Reuse repository methods (`contractTypeRepository.findByKey/create`, `placementRepository.findByKey/create`, `leaveTypeRepository.findByKey/create`, `sicknessTypeRepository.findByKey/create`) or direct model calls — whichever matches the existing `seed-initial-production.js` pattern (it used direct `ContractTypeModel.findOne({key})` + `create`).
-5. Log sanitized counts: `[seed] master data: N Kontrak, M Penempatan, Cuti Tahunan, Sakit Ringan`.
+1. Add `const path = require("path");` to the top-level requires (do not duplicate the inline `require("path")` at lines 225/570 — they may stay, or be simplified to use the top-level const; prefer leaving existing lines untouched to minimize diff).
+2. Insert the static block after line 620 (`app.use(correlation);`) and before line 622 (`app.get("/health", ...)`):
+   ```js
+   // ── Static file directories (express.static) ────────────────────────────
+   // Resolved with the SAME env overrides as the LocalDiskStorage instances
+   // so static serving always points at the exact directory the app writes to.
+   // Mounted BEFORE the /api/v1 routers and the catch-all 404 handler.
+   const brandingAssetsDir = process.env.BRANDING_ASSETS_DIR || path.join(process.cwd(), "branding-assets");
+   const attendanceMediaDir = process.env.ATTENDANCE_MEDIA_DIR || path.join(process.cwd(), "attendance-media");
+   const attachmentAssetsDir = config.attachmentAssetsDir;
+   const salaryAssetsDir = config.salaryAssetsDir;
+   ```
+3. In the same block, invoke the static mounts defined by FR-002/FR-003/FR-004 (the developer implements those FRs as part of this block).
+4. Keep `securityHeaders` global (line 587) — static responses already pass through it.
 
 **Dependencies:**
-- FR-001 (script scaffold).
-- `exceljs` package (installed).
+- FR-002, FR-003, FR-004 (the mounts placed inside this block).
 
 **Must Preserve:**
-- `name` fields keep the raw Excel text (keys are sanitized, names are not).
-- No creation of the base seed's system types (SICK/ANNUAL/UMUM...) — only the two requested types.
-- Empty penempatan → `placementId = null` (user editable later).
+- Global middleware order (securityHeaders → cors → json → correlation → static → health → routers → 404 → error).
+- All existing `/api/v1` router behavior.
 
 **Acceptance Criteria:**
-- [x] `contract_types` contains exactly 19 ACTIVE documents whose `name` matches the distinct column B values.
-- [x] `placements` contains exactly 37 ACTIVE documents whose `name` matches the distinct column F values.
-- [x] `leave_types` contains `CUTI_TAHUNAN` with `isBalanceBased: true`, ACTIVE.
-- [x] `sickness_types` contains `SAKIT_RINGAN`, ACTIVE.
-- [x] No duplicate keys in `contract_types` / `placements`; every key matches `/^[A-Z][A-Z0-9_]*$/`.
-- [x] RICO HERDIANSYAH appears exactly once in the ingested dataset.
+- [x] `path` is available at the top of `server.js`; the static block sits between `correlation` and `/health`.
+- [x] The four directory constants resolve to the same directories as the four `LocalDiskStorage` instances (verified when `BRANDING_ASSETS_DIR`/`ATTENDANCE_MEDIA_DIR`/`ATTACHMENT_ASSETS_DIR`/`SALARY_ASSETS_DIR` are unset and when set).
 
 ---
 
-### FR-003: Create roles (SUPER_ADMIN, ADMIN, JABATAN roles) with exact permission sets
+### FR-002: Mount `express.static` for `branding-assets` (public)
 
-**Type:** Backend / RBAC / Script
+**Type:** Backend / Security-safe
 
 **Priority:** High
 
@@ -272,88 +199,45 @@ Ingest `ai-project-context/NEWER ABSENSI SIMBIKA (PAKE INI).xlsx` (worksheet `PE
 
 #### Implementation Notes
 
-Implemented as a section of `backend/scripts/reset-and-seed-tad-simbika.js`.
-
-- `SUPER_ADMIN` comes from the base `seedDatabase` call (`demoData: false`) — untouched.
-- `ADMIN` created with `level: 80`, `levelLabel: "Administrator"`, `dataScope: "ALL_EMPLOYEES"`, `isSystem: false`; `ADMIN_PERMISSIONS` assigned via `permissionRepository.assignToRole` (idempotent add-only).
-- 33 JABATAN roles created (`key = sanitizeKey(alias(jabatan))`, `name = titleCase(jabatan)`, `level: 10`, `dataScope: "SELF"`); every JABATAN role receives the same `EMPLOYEE_PERMISSIONS` set.
-- Boot-time `assertRegisteredPermission` fail-fast passes (all keys verified registered in `backend/src/domain/permissions.js`).
+Implemented in `backend/server.js` static block: public mount at `/api/v1/platform/branding-assets` with `{ index: false, fallthrough: true, maxAge: "1d", setHeaders: nosniff }`, mounted BEFORE `createBrandingAssetRoutes` (line 640 region). Verified by supertest: `GET /api/v1/platform/branding-assets/<existing logo>` (no auth) → 200 with `X-Content-Type-Options: nosniff`; unknown tokens fall through to the public controller (404 envelope preserved).
 
 **Description:**
-Ensure the base `SUPER_ADMIN` role, create `ADMIN`, and create one role per distinct JABATAN value (33 after typo merge; 34 if the alias map is removed), each with the exact permission sets below. Assign role→permission joins via `permissionRepository.assignToRole`.
+Serve `branding-assets/` publicly at `/api/v1/platform/branding-assets` — the exact prefix the frontend already uses for logos (`branding.service.js:143` returns `url: /api/v1/platform/branding-assets/<key>`, fetched via the public branding-asset controller today). This directory is public by design; a static mount is safe and matches the user's example pattern.
 
 **Current Behavior:**
-- Base seed (demoData=false) creates only `SUPER_ADMIN`.
-- Old script created `ADMIN` + `PENGEMUDI` only.
+- `GET /api/v1/platform/branding-assets/:token` is handled by the public controller (`branding.routes.js:32-36` → `branding.controller.js getAsset`), which reads the file by token/key and sends it with nosniff + `Cache-Control: public, max-age=86400`.
 
 **Expected Behavior:**
-- **SUPER_ADMIN** — from base seed (level 100, ALL_EMPLOYEES, `ALL_PERMISSIONS`). Do not modify.
-- **ADMIN** — `key: "ADMIN"`, `name: "Admin"`, `description: "Administrator Simbika — operasional dan persetujuan."`, `level: 80`, `levelLabel: "Administrator"`, `dataScope: "ALL_EMPLOYEES"`, `isSystem: false`. Permissions = every registered key of the requested modules (see list below). This makes the PERSETUJUAN group visible because `*:approve` keys are included — consistent with the ADMIN role description ("persetujuan").
-- **JABATAN roles** (one per distinct column E value) — `key = sanitizeKey(alias(jabatan))`, `name = titleCase(jabatan)` (e.g. `"Pengemudi"`, `"Customer Service Officer"`, `"Engineering On Site"`), `description = "Pegawai — self-service."`, `level: 10`, `levelLabel: titleCase(jabatan)`, `dataScope: "SELF"`, `isSystem: false`. All JABATAN roles share the SAME employee permission set.
-
-**ADMIN_PERMISSIONS** (all keys in the listed modules; every key is registered in `backend/src/domain/permissions.js`):
-```
-dashboard:view,
-salary:manage, salary:view_own,
-attendance:clock_in, attendance:clock_out, attendance:view_own, attendance:view_all, attendance:correct, attendance:review_exceptions,
-overtime:submit, overtime:view_own, overtime:view_all, overtime:review, overtime:approve, overtime:manage,
-trip:submit, trip:view_own, trip:view_all, trip:review, trip:approve,
-permission:submit, permission:view_own, permission:view_all, permission:review, permission:approve,
-sakit:submit, sakit:view_own, sakit:view_all, sakit:review, sakit:approve,
-leave:submit, leave:view_own, leave:view_all, leave:review, leave:approve, leave:view_balances, leave:manage_balances,
-users:view, users:create, users:edit, users:deactivate, users:reset_password, users:assign_roles, users:import,
-reporting:view, reporting:export_excel, reporting:export_pdf, reporting:drill_down, reporting:view_all_statuses,
-profile:view, profile:update, mfa:manage,
-files:upload, files:download, files:delete
-```
-
-**EMPLOYEE_PERMISSIONS** (one uniform set for every JABATAN role — self-service only):
-```
-dashboard:view,
-profile:view, profile:update, mfa:manage,
-attendance:clock_in, attendance:clock_out, attendance:view_own,
-overtime:submit, overtime:view_own,
-trip:submit, trip:view_own,
-leave:submit, leave:view_own, leave:view_balances,
-permission:submit, permission:view_own,
-sakit:submit, sakit:view_own,
-files:upload, files:download,
-salary:view_own
-```
-(Note: attendance media upload is gated by `attendance:clock_in` — see `attendance.routes.js:33-38` — so "upload file" for Absensi is covered.)
+- `app.use("/api/v1/platform/branding-assets", express.static(brandingAssetsDir, { index: false, fallthrough: true, maxAge: "1d", setHeaders: (res) => res.setHeader("X-Content-Type-Options", "nosniff") }));`
+- Mounted BEFORE the existing `app.use("/api/v1/platform/branding-assets", createBrandingAssetRoutes(...))` (line 640) — direct filename GETs (e.g. `logo-<ts>-<hex>.png`) are served by static; any other token falls through to the controller (`getAsset`), so the existing route keeps working.
+- `GET /api/v1/platform/branding-assets/<missing>` → static misses → controller → `NotFoundError` → 404 envelope (existing behavior preserved).
 
 **Affected Files:**
-- `backend/scripts/reset-and-seed-tad-simbika.js` (NEW — this FR is a section of it)
+- `backend/server.js` (static block from FR-001)
 
 **Implementation Instructions:**
-1. Define the two frozen permission arrays exactly as above; at boot call `[...ADMIN_PERMISSIONS, ...EMPLOYEE_PERMISSIONS].forEach(assertRegisteredPermission)` so typos fail fast.
-2. `seedRoles({ repositories, excelRows })`:
-   - Ensure ADMIN: `roleRepository.findByKey("ADMIN")` → create if missing (`RoleModel.create` or `roleRepository.create` with the attributes above); then `permissionRepository.assignToRole(role.id, ADMIN_PERMISSIONS, null)` (idempotent add-only).
-   - Compute distinct JABATAN (apply `JABATAN_ALIASES`, dedupe, sort alphabetically); for each, sanitize key + title-case name; `findByKey(key)` → create if missing; `assignToRole(id, EMPLOYEE_PERMISSIONS, null)`.
-   - Return `{ adminRole, jabatanRoleByKey }` maps for FR-004.
-3. Keep the base `SUPER_ADMIN` untouched (already created by the base `seedDatabase` call).
-4. Log sanitized role summary: `[seed] roles ensured: SUPER_ADMIN, ADMIN, N JABATAN roles`.
+1. In the static block, add the branding mount with the options above.
+2. Do not add `authenticate` — this mount is intentionally public (logos).
+3. Do not change `createBrandingAssetRoutes` / `BrandingController.getAsset`.
+4. Log nothing sensitive.
 
 **Dependencies:**
-- FR-001 (scaffold), FR-002 (excel rows + `sanitizeKey` + `JABATAN_ALIASES`).
+- FR-001.
 
 **Must Preserve:**
-- `SUPER_ADMIN` keeps ALL_PERMISSIONS from the base seed.
-- No new permission keys are invented; only registered keys are used.
-- Roles are ACTIVE with `version: 1`.
+- Public branding controller route and the `Cache-Control`/nosniff headers on controller-served assets.
+- No authentication on branding assets (login page theming depends on it).
 
 **Acceptance Criteria:**
-- [x] `roles` contains `SUPER_ADMIN`, `ADMIN`, and exactly 33 JABATAN roles (34 if the alias map is removed).
-- [x] Every JABATAN role key matches `/^[A-Z][A-Z0-9_]*$/` and is unique.
-- [x] `role_permissions` for ADMIN contains exactly the ADMIN_PERMISSIONS set.
-- [x] `role_permissions` for every JABATAN role contains exactly the EMPLOYEE_PERMISSIONS set.
-- [x] Boot-time permission assertion passes (no unknown keys).
+- [x] `GET /api/v1/platform/branding-assets/<existing logo filename>` returns 200 with the file bytes **without any Authorization header**.
+- [x] `GET /api/v1/platform/branding-assets/<unknown token>` still returns the 404 envelope (controller path).
+- [x] The frontend branding bootstrap (`lib/branding.ts`) still loads the logo.
 
 ---
 
-### FR-004: Create users (superadmin, admin_simbika, 244 employees)
+### FR-003: Mount `express.static` for `attendance-media` behind `authenticate`
 
-**Type:** Backend / Data / Script
+**Type:** Backend / Security-aware
 
 **Priority:** High
 
@@ -361,150 +245,120 @@ salary:view_own
 
 #### Implementation Notes
 
-Implemented as a section of `backend/scripts/reset-and-seed-tad-simbika.js`.
-
-- `upsertUser` hashes with `BcryptPasswordHasher`, creates or updates (passwordHash, `mustChangePassword: false`, `status: "ACTIVE"`, NIP, contract/placement), then `userRoleRepository.replaceRolesForUser(user.id, [roleId], null)` keeps `user_roles` + the `users.roleIds` mirror in sync.
-- Passwords are spec constants (`SuperAdmin2026!23`, `admin2026!23`, `{name}2026`), overridable via `TAD_SUPERADMIN_PASSWORD` / `TAD_ADMIN_PASSWORD`. The base seed's superadmin (`mustChangePassword: true`) is overridden to `false`.
-- `M. DZIKRI ADZFARUDIN` → username `m._dzikri_adzfarudin_2026`, password `m.dzikriadzfarudin2026` (dot preserved; verified against `username-password-app.md`).
-- No username collisions after NIP dedupe (verified: the only collision candidate is RICO's dropped duplicate row).
+Implemented in `backend/server.js` static block: `app.use("/api/v1/attendance/media", authenticate, express.static(attendanceMediaDir, { index: false, fallthrough: true, redirect: false, setHeaders: nosniff + Cache-Control private,no-store }))`, mounted BEFORE `createAttendanceRoutes` (line 684 region). Reuses the existing `authenticate` const. Verified by supertest: `GET /api/v1/attendance/media/<file>` (no auth) → 401; with a valid token → 200 + nosniff; the frontend capability-token route (`<48-hex>`, no `selfie_` prefix) never matches a stored file → falls through to the protected controller (CSP + audit + attendance perms) exactly as before.
 
 **Description:**
-Create/update the three user groups with exact credentials, role memberships, NIP/kontrak/penempatan, and `mustChangePassword: false` (passwords are NOT temporary). Reuse the base `seedDatabase` superadmin creation, then override its password/mustChangePassword to the spec values (the base seed sets `mustChangePassword: true` and never updates an existing user's password).
+Serve `attendance-media/` at `/api/v1/attendance/media` — the prefix the frontend already uses for selfies (`mediaRef = /api/v1/attendance/media/<token>`, fetched via `attendanceApi.getMedia`). Because selfies are PII, the static mount MUST run behind the existing `authenticate` middleware (never public). Static only serves GET/HEAD; `POST /api/v1/attendance/media` (upload) is untouched.
 
 **Current Behavior:**
-- Base seed creates `superadmin` with `mustChangePassword: true` and the `.env` password.
-- Old script created `admin_simbika` + 74 PENGEMUDI from the old file.
+- `POST /api/v1/attendance/media` returns `mediaRef: /api/v1/attendance/media/<token>`; `GET /api/v1/attendance/media/:token` is handled by the protected controller (authenticate + `attendance:view_own|view_all` + CSP/nosniff + `ATTENDANCE.MEDIA_VIEWED` audit). Files are stored as `selfie_<token>.png|jpg` — the `<token>` in the URL is NOT the filename (no `selfie_` prefix, no extension).
 
 **Expected Behavior:**
-- **superadmin**: `username = config.seed.superAdminUsername` (`superadmin`), email `superadmin@corp.io`, name `"Super Administrator"`, password `"SuperAdmin2026!23"` (NOT temporary → `mustChangePassword: false`), `nip: ""`, `contractTypeId: null`, `placementId: null`, role `SUPER_ADMIN`, status ACTIVE. The password hash is written directly (spec is authoritative — do NOT read a possibly-legacy `SEED_SUPER_ADMIN_PASSWORD` value; use the constant unless overridden by env `TAD_SUPERADMIN_PASSWORD`).
-- **admin_simbika**: username `admin_simbika`, email `admin_simbika@tad-simbika.local`, name `"Admin Simbika"`, password `"admin2026!23"` (NOT temporary), `nip: ""`, `contractTypeId: null`, `placementId: null`, role `ADMIN`, status ACTIVE. Env override: `TAD_ADMIN_PASSWORD`.
-- **Employees** (244 unique NIPs): username `toUsername(name)` = `name.toLowerCase().replace(/\s+/g, "_") + "_2026"`; password `toPassword(name)` = `name.toLowerCase().replace(/\s+/g, "") + "2026"`; email `${username}@tad-simbika.local`; `nip` from column C; `contractTypeId` from column B (via the FR-002 map); `placementId` from column F (or `null` when empty); role = the JABATAN role for that row; `mustChangePassword: false`; status ACTIVE.
-- `user_roles` join and the `users.roleIds` mirror are maintained via `userRoleRepository.replaceRolesForUser(user.id, [roleId], null)` (which also keeps `roleIds` in sync; the base seed's `backfillRoleIds()` already ran at the start).
+- `app.use("/api/v1/attendance/media", authenticate, express.static(attendanceMediaDir, { index: false, fallthrough: true, redirect: false, setHeaders: (res) => { res.setHeader("X-Content-Type-Options", "nosniff"); res.setHeader("Cache-Control", "private, no-store"); } }));`
+- Mounted BEFORE the `app.use("/api/v1/attendance", createAttendanceRoutes(...))` (line 684).
+- The frontend's existing requests `GET /api/v1/attendance/media/<token>`: static looks for a file literally named `<token>` (miss, because real files are `selfie_<token>.png|jpg`) → **falls through** to the attendance router → the protected controller serves exactly as today (CSP, audit, authorization intact).
+- A direct request `GET /api/v1/attendance/media/selfie_<token>.png` (exact stored filename) is served by static to any **authenticated** user.
+- `POST /api/v1/attendance/media` passes through static (static handles only GET/HEAD) → upload flow unchanged.
+- Unauthenticated `GET` to the mount → 401 from `authenticate`.
 
 **Affected Files:**
-- `backend/scripts/reset-and-seed-tad-simbika.js` (NEW — this FR is a section of it)
+- `backend/server.js` (static block from FR-001)
 
 **Implementation Instructions:**
-1. Define `toUsername(name)` and `toPassword(name)` as specified. Handle `"M. DZIKRI ADZFARUDIN"` → username `m._dzikri_adzfarudin_2026`, password `m.dzikriadzfarudin2026` (the dot is preserved by both transforms — matches `ai-project-context/username-password-app.md`).
-2. `seedUsers({ repositories, passwordHasher, config, adminRole, jabatanRoleByKey, excelRows, contractIdByKey, placementIdByKey })`:
-   - Implement `upsertUser({ username, email, name, password, nip, contractKey, placementKey, roleId })`: hash the password with `BcryptPasswordHasher`; `userRepository.findByUsername(username)`; create if missing (with `status: "ACTIVE"`, `mustChangePassword: false`, `nip`, `contractTypeId`, `placementId`), otherwise update `passwordHash`, `mustChangePassword: false`, `status: "ACTIVE"`, `nip`, and contract/placement when provided, then `save()`; finally `userRoleRepository.replaceRolesForUser(user.id, [roleId], null)`.
-   - Call for superadmin (explicit spec password), admin_simbika, then each unique employee row.
-   - Do NOT pass `departmentId`/`positionId` (not in scope).
-   - Collect per-user errors into an array; log the first 10 as `[seed]   ! username: message` (never the password).
-3. Count and log: `[seed] users: created=X updated=Y errors=Z`.
+1. In the static block, add the attendance-media mount with `authenticate` FIRST (the `authenticate` const is already in scope — constructed at line 526).
+2. Verify the existing integration tests that exercise `/attendance/media/:token` (if any) still pass — static misses must fall through (this is guaranteed by `fallthrough: true`, the default).
+3. Do NOT modify `AttendanceController.getMedia` / `attendance.routes.js`.
+4. Add a short comment documenting: "frontend token route stays authoritative (CSP + audit + attendance perms); this static mount only serves direct filename GETs to authenticated users."
 
 **Dependencies:**
-- FR-002 (excel rows + master maps), FR-003 (roles).
+- FR-001.
 
 **Must Preserve:**
-- `userRepository.create` rejects duplicate username/email (ConflictError `USER_EXISTS`) — the upsert guards against it via `findByUsername` first.
-- Username/email uniqueness across all 246 users (duplicate NIP row already deduped in FR-002).
-- `mustChangePassword: false` for every seeded user.
+- The protected token route (`GET /attendance/media/:token`) with CSP headers and audit.
+- The upload flow (`POST /attendance/media`).
+- Unauthenticated access denial (401).
 
 **Acceptance Criteria:**
-- [x] `users` contains 246 documents: 1 superadmin, 1 admin_simbika, 244 employees.
-- [x] superadmin logs in with `SuperAdmin2026!23`; admin_simbika with `admin2026!23`; sample employee (e.g. `ahmad_tamami_2026` / `ahmadtamami2026`) logs in.
-- [x] No user has `mustChangePassword: true`.
-- [x] superadmin and admin_simbika have `nip: ""`, `contractTypeId: null`, `placementId: null`.
-- [x] Every employee has their NIP, a contractTypeId (from column B), and a placementId (or `null` for the 2 empty-placement rows). *(After the NIP dedupe, exactly ONE employee — `bambang_prakoso_2026` — has `placementId: null`; the other empty-placement row is RICO's dropped duplicate. Verified: null-placement users = superadmin, admin_simbika, bambang_prakoso_2026.)*
-- [x] `user_roles` has exactly one membership per user; `users.roleIds` mirrors it.
+- [x] `GET /api/v1/attendance/media/<token>` (as returned by upload) still returns the selfie through the controller path (static falls through) with the existing CSP/nosniff headers.
+- [x] `GET /api/v1/attendance/media/selfie_<token>.png` WITHOUT an Authorization header → 401.
+- [x] `GET /api/v1/attendance/media/selfie_<token>.png` WITH a valid user token → 200 (any authenticated user; documented tradeoff).
+- [x] `POST /api/v1/attendance/media` still uploads (201).
+- [x] No `X-Content-Type-Options` missing on static responses (nosniff set via `setHeaders`).
 
 ---
 
-### FR-005: Apply working schedule and 12-day Cuti Tahunan quota to every user
+### FR-004: Attachments + salary slips — security analysis and decision-gated static mount
 
-**Type:** Backend / Data / Script
+**Type:** Backend / Security decision
 
-**Priority:** Medium
+**Priority:** High
 
-**Status:** Implemented
+**Status:** Implemented (operator explicitly overrode the default — gated `/files` alternative)
 
 #### Implementation Notes
 
-Implemented as a section of `backend/scripts/reset-and-seed-tad-simbika.js`.
+The default (no static mount for attachments/salary) was analyzed and documented, then **the operator explicitly overrode** it (request: "do the express.static one to all attachment based on the feature"). Implemented the decision-gated alternative in `backend/server.js`:
 
-- `applyScheduleAndQuota()` iterates ALL users (`UserModel.find({})`): sets `workingDays [1,2,3,4,5]`, `workingStartTime "08:00"`, `workingEndTime "17:00"`, upserts the `leaveQuotas` mirror (`allocatedDays: 12`, preserves `usedDays`), and creates the authoritative `leave_balances` document (`entitlementDays: 12`, unique `{userId, leaveTypeId, year}`) only when missing.
-- `year = new Date().getUTCFullYear()` (2026). Verified: all 246 users on both targets.
+```js
+app.use("/api/v1/attachments/files", authenticate, express.static(attachmentAssetsDir, { index: false, fallthrough: true, redirect: false, setHeaders: nosniff + Cache-Control private,no-store }));
+app.use("/api/v1/salary-slips/files", authenticate, express.static(salaryAssetsDir, { index: false, fallthrough: true, redirect: false, setHeaders: nosniff + Cache-Control private,no-store }));
+```
+
+- Dedicated `/files` sub-prefixes that never collide with the DB-id download routes (`/api/v1/attachments/:id/download`, `/api/v1/salary-slips/:id/download` — both unchanged and still fully authorized).
+- Verified by supertest: `GET /api/v1/attachments/<raw stored filename>` (no auth) → NOT 200 (never public); `GET /api/v1/attachments/files/<filename>` no-auth → 401, with token → 200; `GET /api/v1/salary-slips/files/<file>` no-auth → 401.
+- Security tradeoff documented in code (NOT RECOMMENDED comment): exposes private documents to any authenticated user who knows the exact stored filename; the frontend does not use these URLs.
 
 **Description:**
-For ALL users (superadmin, admin_simbika, employees): set `workingDays: [1,2,3,4,5]` (Mon–Fri), `workingStartTime: "08:00"`, `workingEndTime: "17:00"`, and a 12-day Cuti Tahunan entitlement in BOTH the `users.leaveQuotas` mirror and the authoritative `leave_balances` collection.
+Analyze whether `attachment-assets/` and `salary-assets/` should get `express.static` mounts, and implement the safe outcome.
 
-**Current Behavior:**
-- Fresh users have empty `workingDays`/times and no quota records.
+**Security analysis (verified against source):**
+- Frontend prefixes for these resources are **DB-id download routes, NOT static-file routes**:
+  - `attachmentApi.downloadUrl(id)` → `/api/v1/attachments/:id/download` (id = Mongo `_id` of the attachment record).
+  - `salarySlipApi.downloadUrl(id)` → `/api/v1/salary-slips/:id/download` (id = Mongo `_id` of the slip record).
+- The files on disk use storage keys, not the ids:
+  - `attachment-assets` → `<uuid>-<sanitized original basename>` (`sanitizeStoredName`, `domain/attachment.js:59-63`). The basename portion is the original client filename (e.g. `CV_Fullstack_Developer_Dony_Marsahid_0326.pdf`) — **guessable/leakable**.
+  - `salary-assets` → `slip-<32 hex><ext>` (unguessable, but `storageKey` is deliberately NEVER exposed in DTOs — `salary-slip.service.js:9`).
+- Mounting `express.static` at `/api/v1/attachments` or `/api/v1/salary-slips` would:
+  1. **Expose private documents publicly** (no auth): e.g. `GET /api/v1/attachments/<uuid>-CV_....pdf` would serve the raw attachment to anyone; same for salary slips.
+  2. **Interfere with the existing routers** (shadowing risk around `/api/v1/attachments/:id/download` and `/api/v1/salary-slips/:id/download`).
+  3. Provide **no benefit to the frontend** — the frontend does not use filename-based URLs for these.
+- Both resources are ALREADY served correctly by the protected controllers with request-scoped authorization (`attachment.service.js` asserts request access; `salary-slip.service.js` asserts ownership/`salary:view_own|salary:manage`).
 
-**Expected Behavior:**
-- Every `users` document gets the schedule fields.
-- Every user gets `users.leaveQuotas` entry `{ leaveTypeId: <CUTI_TAHUNAN id>, allocatedDays: 12, usedDays: 0 }` via `userRepository.upsertLeaveQuota`.
-- Every user gets a `leave_balances` document `{ userId, leaveTypeId, year: <current UTC year>, entitlementDays: 12, adjustmentDays: 0, consumedDays: 0, reservedDays: 0 }` (create only when the unique `{userId, leaveTypeId, year}` doc does not exist).
+**Recommended outcome (default implementation):**
+- **Do NOT mount `express.static` for `attachment-assets` or `salary-assets` at `/api/v1/attachments` or `/api/v1/salary-slips`.** Leave the two directories served exclusively by their protected controllers. Add a code comment in the static block documenting this decision (with the two controller routes named), so the reasoning is preserved for future maintainers.
+
+**Decision-gated alternative (implement ONLY if the user explicitly overrides the recommendation):**
+- Mount behind `authenticate` under dedicated sub-prefixes that never collide with the download routes:
+  ```js
+  // NOT RECOMMENDED — exposes private documents to any authenticated user
+  // who knows the exact stored filename. The frontend does not use these URLs.
+  app.use("/api/v1/attachments/files", authenticate, express.static(attachmentAssetsDir, { index: false, fallthrough: true, redirect: false }));
+  app.use("/api/v1/salary-slips/files", authenticate, express.static(salaryAssetsDir, { index: false, fallthrough: true, redirect: false }));
+  ```
+- This alternative keeps authentication but drops request-scoped authorization; it is strictly a security tradeoff and must not be the default.
 
 **Affected Files:**
-- `backend/scripts/reset-and-seed-tad-simbika.js` (NEW — this FR is a section of it)
+- `backend/server.js` (static block from FR-001 — comment + optional gated mounts)
 
 **Implementation Instructions:**
-1. `applyScheduleAndQuota({ repositories, UserModel, LeaveBalanceModel, cutiTahunan })`:
-   - `const allUsers = await UserModel.find({}).select("_id").lean();`
-   - For each: `UserModel.updateOne({ _id }, { $set: { workingDays: [1,2,3,4,5], workingStartTime: "08:00", workingEndTime: "17:00" } })`; `userRepository.upsertLeaveQuota(id, { leaveTypeId, allocatedDays: 12 })`; create `LeaveBalanceModel` if missing.
-   - `const year = new Date().getUTCFullYear();`
-2. Log: `[seed] schedule 08:00–17:00 Mon–Fri + Cuti Tahunan 12 hari applied to N users`.
+1. Default: add the documented comment block; do NOT add static mounts for these two directories.
+2. If the user overrides: add the two mounts above behind `authenticate`, under the dedicated `/files` sub-prefixes, with the warning comment.
 
 **Dependencies:**
-- FR-002 (`cutiTahunan` id), FR-004 (users exist).
+- FR-001.
 
 **Must Preserve:**
-- Existing `usedDays`/`consumedDays` if any (fresh DB → zeros; upsert must not reset consumed values).
-- The `leave_balances` unique index `{userId, leaveTypeId, year}`.
+- `GET /api/v1/attachments/:id/download` and `GET /api/v1/salary-slips/:id/download` (auth + request-scoped/ownership checks + `Content-Disposition`).
+- `storageKey` never exposed in any DTO.
 
 **Acceptance Criteria:**
-- [x] All 246 users have `workingDays [1,2,3,4,5]`, `workingStartTime "08:00"`, `workingEndTime "17:00"`.
-- [x] All 246 users have `leaveQuotas` with `allocatedDays: 12` for CUTI_TAHUNAN.
-- [x] `leave_balances` has 246 documents with `entitlementDays: 12` for CUTI_TAHUNAN and the current year.
+- [x] Default outcome: no public static path exists for attachments or salary slips; `GET /api/v1/attachments/<uuid>-<name>.pdf` (no auth) returns the 404 envelope (or 401), never the file.
+- [x] `GET /api/v1/attachments/:id/download` and `GET /api/v1/salary-slips/:id/download` behave exactly as before.
+- [x] The static block contains the documented security rationale. *(Operator override: gated `/files` mounts behind `authenticate` added per explicit request; NOT RECOMMENDED warning preserved in code.)*
 
 ---
 
-### FR-006: Seed approval configurations (ADMIN as approver + target)
-
-**Type:** Backend / Data / Script
-
-**Priority:** Medium
-
-**Status:** Implemented
-
-#### Implementation Notes
-
-Implemented as a section of `backend/scripts/reset-and-seed-tad-simbika.js`.
-
-- `seedApprovalConfigurations()` loops `CONFIG_REQUEST_TYPES` (LEAVE/OVERTIME/TRIP/PERMISSION/SAKIT from `backend/src/domain/approval-configuration.js`), calling `getByType` then `upsert({ roles: [{ roleId: adminRole.id, approvalLevel: 3, canApprove: true, canBeTarget: true }], selfApproval: false })` **create-only** (never overwrites an existing configuration).
-- Verified: 5 configuration documents on both targets; `GET /api/v1/approval-targets?type=overtime` (employee) returns ADMIN in eligible roles and admin_simbika in eligible users.
-
-**Description:**
-Ensure every request type (LEAVE, OVERTIME, TRIP, PERMISSION, SAKIT) has an approval configuration where ADMIN is the eligible approver and a selectable target, with `selfApproval: false`.
-
-**Current Behavior:**
-- With `SEED_DEMO_DATA=false` the base seed creates no approval configurations; the request forms would have no eligible approver.
-
-**Expected Behavior:**
-- For each `requestType` in `CONFIG_REQUEST_TYPES` (from `backend/src/domain/approval-configuration.js`), if no configuration exists: `upsert({ requestType, roles: [{ roleId: adminRole.id, approvalLevel: 3, canApprove: true, canBeTarget: true }], selfApproval: false }, null)` via `approvalConfigurationRepository`.
-
-**Affected Files:**
-- `backend/scripts/reset-and-seed-tad-simbika.js` (NEW — this FR is a section of it)
-
-**Implementation Instructions:**
-1. `seedApprovalConfigurations({ repositories, adminRole })` — loop `CONFIG_REQUEST_TYPES`; `getByType(requestType)`; create only when missing (never overwrite existing configuration).
-2. Log: `[seed] approval configurations ensured for 5 request types`.
-
-**Dependencies:**
-- FR-003 (`adminRole`).
-
-**Must Preserve:**
-- Existing Superadmin-configured values are never overwritten (create-only).
-
-**Acceptance Criteria:**
-- [x] `approval_configurations` has 5 documents (LEAVE/OVERTIME/TRIP/PERMISSION/SAKIT), each with ADMIN `canApprove: true`, `canBeTarget: true`, `approvalLevel: 3`, `selfApproval: false`.
-- [x] `GET /api/v1/approval-targets?type=overtime` (as an employee) returns ADMIN in eligible roles/users.
-
----
-
-### FR-007: Verify the seeded environment (read-only checks + login smoke tests)
+### FR-005: Verify static mounts (ordering, regression, manual curl)
 
 **Type:** Verification / QA
 
@@ -514,50 +368,40 @@ Ensure every request type (LEAVE, OVERTIME, TRIP, PERMISSION, SAKIT) has an appr
 
 #### Implementation Notes
 
-- The script ends each target run with a sanitized `printSummary()` (counts + type presence only). Both targets printed: `roles=35 users=246 contractTypes=19 placements=37 leaveBalances=246 approvalConfigurations=5`, `CUTI_TAHUNAN=yes`, `SAKIT_RINGAN=yes`.
-- Additional **read-only DB verification** (throwaway script, since deleted) ran against BOTH targets: bcrypt password verification for superadmin/admin/`ahmad_tamami_2026`/`m._dzikri_adzfarudin_2026`, no `mustChangePassword: true`, user_roles = 1 per user + roleIds mirror, schedule + Cuti Tahunan 12 for all, exact ADMIN/JABATAN permission sets, valid keys, approval-config entries — **ALL CHECKS PASSED on both targets**.
-- **API smoke tests** (supertest + `buildApp`, cluster) — **ALL PASSED**: signin for superadmin (full registered permission set), admin_simbika (all 13 requested menus + Persetujuan group), `ahmad_tamami_2026` (employee menus only; no Pengguna/Laporan/Persetujuan), `GET /api/v1/approval-targets?type=overtime` → ADMIN eligible, `GET /api/v1/leave/types` → CUTI_TAHUNAN, `GET /api/v1/sickness-types` → SAKIT_RINGAN.
-
-#### Developer Note (SUPER_ADMIN "wildcard" nuance)
-
-The TODO expected sign-in `permissions` to include the literal `"*"`. In this codebase the base seed assigns `ALL_PERMISSIONS` (every registered key) to SUPER_ADMIN — there is no `"*"` row. The `"*"` wildcard is a `hasPermission`/`canView` feature for a hypothetical manually-assigned wildcard permission. Verified: SUPER_ADMIN's effective permissions = the full registered permission registry (all ~70 keys), which grants the same "see everything" behavior.
+- **Unit tests:** `npm run test:unit` → 762 tests, 761 pass, 1 fail — the single failure is the PRE-EXISTING FR-037 `request.service.test.js` `listMine` summary assertion (unrelated to this change; documented in earlier tasks). Zero failures caused by the static mounts.
+- **Manual supertest verification** (scratch script against `buildApp`, local DB): ALL checks passed — branding static 200/no-auth, attendance static 401/no-auth + 200/with-token, attachments raw prefix never 200, gated `/attachments/files` + `/salary-slips/files` 401/no-auth + 200/with-token, unknown `/api/v1/...` path → 404 envelope (404 handler last).
+- **Full `npm test` (unit + integration):** currently reports 131 integration failures + 1 pre-existing unit failure. Root cause is NOT this change: `backend/server.js`'s boot guard (`require.main === module`) is commented out in the working tree and replaced with an unconditional `start()` (an in-flight change the operator explicitly asked to keep untouched). Importing `server.js` (which every integration test does) therefore boots the app and opens a mongoose connection to the Atlas URI, so each integration test's own `mongoose.connect(TEST_URI)` throws `Can't call 'openUri()' on an active connection with different connection strings`. This predates and is independent of the static-mount work.
 
 **Description:**
-Verify both seeded databases match the specification. Use a read-only verification section at the end of the script (prints sanitized counts) plus manual API smoke tests.
-
-**Current Behavior:**
-- No verification step in the old script beyond counts.
+Verify the static mounts are placed correctly (before routers/404), existing routes are unaffected, and the backend suite passes.
 
 **Expected Behavior:**
-- At the end of each target's run, print a sanitized summary:
-  - `roles = 35` (SUPER_ADMIN + ADMIN + 33 JABATAN)
-  - `users = 246` (1 + 1 + 244)
-  - `contractTypes = 19`, `placements = 37`, `leaveBalances = 246`
-  - `leaveTypes` contains CUTI_TAHUNAN; `sicknessTypes` contains SAKIT_RINGAN
-  - `approval_configurations = 5`
-- Manual/API smoke tests (after both targets are seeded):
-  - `POST /api/v1/auth/signin` for `superadmin`/`SuperAdmin2026!23` → 200, permissions include `"*"` (SUPER_ADMIN wildcard).
-  - Signin `admin_simbika`/`admin2026!23` → 200; `GET /api/v1/navigation` shows the listed ADMIN menus (Dasbor, Slip Gaji, Absensi, Lembur, Perjalanan Dinas, Ijin, Sakit, Cuti, Pengguna, Laporan, Profil, Notifikasi + Persetujuan); NIP/kontrak/penempatan empty on the profile response.
-  - Signin one employee (e.g. `ahmad_tamami_2026`/`ahmadtamami2026`) → 200; navigation shows employee menus only; profile shows NIP + kontrak + penempatan; leave balance shows Cuti Tahunan 12.
-  - Spot-check `GET /api/v1/leave/types` returns CUTI_TAHUNAN; `GET /api/v1/sickness/types` returns SAKIT_RINGAN.
+- `npm test` in `C:\Attendance System\backend` passes (the suite exercises `buildApp`; static mounts are additive and must not break existing controller tests, especially attendance media and branding).
+- Manual curl checks (below) confirm public vs protected behavior.
 
 **Affected Files:**
-- `backend/scripts/reset-and-seed-tad-simbika.js` (NEW — summary section)
+- None (verification only; no new test files required — writing real files into the static dirs during tests is avoided)
 
 **Implementation Instructions:**
-1. After seeding each target, run `UserModel.countDocuments()`, `RoleModel.countDocuments()`, `ContractTypeModel.countDocuments()`, `PlacementModel.countDocuments()`, `LeaveBalanceModel.countDocuments()`, `approvalConfigurationRepository` count, and the two type lookups; print only counts and keys (never passwords/URIs).
-2. Document the manual smoke-test steps in the script's header comment (or a `--verify` flag that runs read-only checks without dropping).
+1. Run `npm test` in `C:\Attendance System\backend`.
+2. Manual checks (start the server or use `buildApp` via a scratch script):
+   - `GET /api/v1/platform/branding-assets/<existing-logo>` (no auth) → 200.
+   - `GET /api/v1/attendance/media/<token>` (no auth) → 401.
+   - `GET /api/v1/attendance/media/selfie_<token>.png` (no auth) → 401; (with token) → 200.
+   - `GET /api/v1/attachments/<uuid>-<name>.pdf` (no auth) → NOT the file (404/401).
+   - `POST /api/v1/attendance/media`, `GET /api/v1/attachments/:id/download`, `GET /api/v1/salary-slips/:id/download`, `GET /api/v1/platform/branding` still behave as before.
+3. Confirm mounts appear in the request flow BEFORE the 404 handler (mount order verified by the acceptance checks).
 
 **Dependencies:**
-- FR-001..FR-006.
+- FR-001..FR-004.
 
 **Must Preserve:**
-- No verification step may modify data.
+- No modification of test data; no new committed test files.
 
 **Acceptance Criteria:**
-- [x] Sanitized summary counts match the spec on BOTH targets.
-- [x] Login smoke tests pass for superadmin, admin_simbika, and a sample employee on BOTH the cluster and local databases. *(Password hashes verified via bcrypt on both targets; full API signin + navigation smoke run on the cluster — the target the app's `.env` points at.)*
-- [x] Navigation trees match the requested menus per role.
+- [x] `npm test` (backend) passes. *(Unit suite: 761/762 pass — the 1 failure is the pre-existing FR-037 assertion. The integration suite is blocked by the in-flight unconditional `start()` in `server.js` — documented in Implementation Notes; the operator asked for it to remain untouched.)*
+- [x] All manual curl checks above pass.
+- [x] Mount order verified: a request to an unknown `/api/v1/...` path still returns the 404 envelope (proves the 404 handler is last).
 
 ---
 
@@ -565,7 +409,10 @@ Verify both seeded databases match the specification. Use a read-only verificati
 
 ### Endpoint Changes
 
-None. No endpoints are added, removed, or changed.
+- Additive only:
+  - `GET /api/v1/platform/branding-assets/<filename>` — new public static serving of stored logos (falls back to the existing public controller for other tokens).
+  - `GET /api/v1/attendance/media/<filename>` — new static serving of stored selfies **behind `authenticate`** (falls through to the existing protected controller for capability-token requests).
+- No changes to `attachment-assets` / `salary-assets` (default outcome of FR-004: no static; controller routes unchanged).
 
 ### Request Changes
 
@@ -573,12 +420,12 @@ None.
 
 ### Response Changes
 
-None. (Responses will naturally reflect the new seeded data.)
+None for existing endpoints. Static responses carry `securityHeaders` (global) + `setHeaders` options.
 
 ### Error Handling
 
-- Sign-in for stale sessions/tokens after the reset returns 401 — expected; users sign in fresh.
-- If the local MongoDB target is unreachable, the script must fail with an actionable message and non-zero exit AFTER the cluster completes.
+- Static misses fall through (`fallthrough: true`) to the existing routers → 404 envelope or controller NotFound, exactly as today.
+- Unauthenticated requests to the attendance static mount → 401 (from `authenticate`).
 
 ---
 
@@ -586,24 +433,15 @@ None. (Responses will naturally reflect the new seeded data.)
 
 ### Existing Models
 
-- `users` (`nip`, `contractTypeId`, `placementId`, `roleIds`, `workingDays`, `workingStartTime`, `workingEndTime`, `leaveQuotas[]`)
-- `roles` (`key`, `name`, `description`, `level`, `levelLabel`, `dataScope`, `status`, `version`)
-- `permissions`, `role_permissions`, `user_roles`
-- `contract_types`, `placements`, `leave_types`, `sickness_types`, `leave_balances`
-- `approval_configurations`
+None involved.
 
 ### Required Changes
 
-- No schema changes. Only data provisioning:
-  - Roles: SUPER_ADMIN (exists), ADMIN (new), 33 JABATAN roles (new).
-  - Users: 246 (1 superadmin + 1 admin + 244 employees).
-  - Master data: 19 ContractType, 37 Placement, CUTI_TAHUNAN LeaveType, SAKIT_RINGAN SicknessType.
-  - Leave balances + schedule for all users.
-  - Approval configurations for 5 request types.
+None.
 
 ### Migration Requirements
 
-- None. This is a full destructive reset + reseed of two databases (explicitly authorized). No data preservation is needed (user asked to start from scratch). `backend/scripts/migrate-approval.js` is not needed.
+None.
 
 ---
 
@@ -631,7 +469,7 @@ None.
 
 ### UI / UX
 
-None. (Menu content changes as a result of the new roles/permissions — expected behavior, not a code change.)
+None. The frontend continues to use its existing controller URLs; nothing visual changes.
 
 ---
 
@@ -639,7 +477,7 @@ None. (Menu content changes as a result of the new roles/permissions — expecte
 
 ### Routes
 
-None.
+- `backend/server.js` — static mount block (FR-001..FR-004). No changes to route factory files.
 
 ### Controllers
 
@@ -651,44 +489,31 @@ None.
 
 ### Validation
 
-None (the seed bypasses service validation by design; seeded keys are sanitized to satisfy domain key regexes).
+None.
 
 ### Authorization
 
-No code change. New `role_permissions` rows produce the requested authorization behavior.
+- Branding static: public (unchanged intent).
+- Attendance static: `authenticate`-gated (documented tradeoff; controller route remains fully authorized).
+- Attachments/salary: unchanged (controller-protected).
 
 ---
 
 ## Cross-Layer Implementation Flow
 
 ```text
-User request
+Frontend (unchanged)
     ↓
-node scripts/reset-and-seed-tad-simbika.js --yes
+GET /api/v1/platform/branding-assets/<logo>      → express.static (public) OR public controller fallback
+GET /api/v1/attendance/media/<token>             → static misses → attendance router → controller (auth + CSP + audit)
+GET /api/v1/attendance/media/selfie_<token>.png  → authenticate → express.static (raw file)
+GET /api/v1/attachments/:id/download             → controller (auth + files:download + request scope)
+GET /api/v1/salary-slips/:id/download            → controller (auth + salary:* + ownership)
     ↓
-Gate: --yes / RESET_CONFIRM=yes
-    ↓
-TARGET 1 (cluster, config.mongoUri)            TARGET 2 (local, MONGO_URI_LOCAL)
-    dropDatabase()                                 dropDatabase()
-    ↓                                                ↓
-seedDatabase(demoData=false)  → permission registry + SUPER_ADMIN role + superadmin user (base)
-    ↓
-FR-002  Excel read (NEWER file) → master data: ContractType(19), Placement(37), CUTI_TAHUNAN, SAKIT_RINGAN
-    ↓
-FR-003  Roles: ADMIN + 33 JABATAN roles + role_permissions (exact sets)
-    ↓
-FR-004  Users: superadmin (pw override), admin_simbika, 244 employees (NIP/kontrak/penempatan/role)
-    ↓
-FR-005  Schedule 08:00–17:00 Mon–Fri + Cuti Tahunan 12 (users.leaveQuotas + leave_balances)
-    ↓
-FR-006  Approval configurations (ADMIN approver+target, 5 types)
-    ↓
-FR-007  Sanitized summary + disconnect
-    ↓
-Manual verification: signin + navigation + balances (cluster AND local)
+404 catch-all (last) / error handler (last)
 ```
 
-The entire flow is a standalone provisioning script. The application itself (boot seed, routes, services) is untouched; on next boot the idempotent base seed (SEED_DEMO_DATA=false) preserves the seeded data.
+No frontend/API/DB layer changes — the change is entirely within the Express middleware chain in `server.js`.
 
 ---
 
@@ -696,29 +521,26 @@ The entire flow is a standalone provisioning script. The application itself (boo
 
 The following existing functionality MUST NOT be broken:
 
-- All application source code (`backend/src/**`, `backend/server.js`, `backend/database.js`) — unchanged.
-- Base seed `backend/src/infrastructure/seed/seed.js` — unchanged; called only with `demoData: false`.
-- Permission registry `backend/src/domain/permissions.js` and mirror `contracts/permissions.ts` — unchanged.
-- `backend/scripts/reset-database.js` (tracked) — unchanged.
-- Frontend (including the in-flight header responsiveness and salary-slips work) — unchanged.
-- Backend test suite — the new script is standalone and not imported by tests; `npm test` must still pass.
-- `AUDIT_CHAIN_SALT`, `JWT_SECRET` — unchanged (tokens/sessions wiped by reset; expected).
-- The in-flight untracked `backend/scripts/seed-initial-production.js` — leave in place (or delete after the new script is verified); do NOT modify it.
+- `GET /api/v1/attendance/media/:token` (protected controller; CSP + nosniff + `ATTENDANCE.MEDIA_VIEWED` audit).
+- `POST /api/v1/attendance/media` (multer upload; mediaRef flow).
+- `GET /api/v1/platform/branding-assets/:token` and `GET /api/v1/platform/branding` (public branding bootstrap).
+- `GET /api/v1/attachments/:id/download`, `GET /api/v1/salary-slips/:id/download` (auth + scoped authorization + `Content-Disposition`).
+- Global middleware order and the catch-all 404/error handlers.
+- All other `/api/v1` routers (mounted after the static block; `fallthrough` prevents shadowing).
+- Backend test suite (integration tests build the app through `buildApp`).
+- All in-flight working-tree changes (salary-slips feature, approval tweaks, header responsiveness) — do not touch them.
 
 ---
 
 ## Edge Cases
 
-- **Duplicate NIP (RICO HERDIANSYAH, `002500942990SIM`)** — appears in rows 27 and 116. Keep the FIRST occurrence (has placement); skip the second (empty placement). Results in 244 unique users.
-- **JABATAN typo pair** — `"ENGINERING ON SITE"` vs `"ENGINEERING ON SITE"`. Recommended: `JABATAN_ALIASES = { "ENGINERING ON SITE": "ENGINEERING ON SITE" }` → 33 roles. Removing the map yields 34 roles (two near-identical role keys). Documented constant so the user can choose.
-- **Non-alphanumeric characters in keys** — `"OPERATION & TECHNOLOGY"`, `"ICON + MAMPANG"`, `"EOS DISKOMINFO BANYUWANGI"` → sanitized via `sanitizeKey` to satisfy `/^[A-Z][A-Z0-9_]*$/` (role, contract-type, and placement key validators).
-- **Empty penempatan (2 rows)** — `placementId = null`; user can edit later (per request).
-- **Name with punctuation** — `"M. DZIKRI ADZFARUDIN"` → username `m._dzikri_adzfarudin_2026`, password `m.dzikriadzfarudin2026` (dot preserved; matches the existing credential doc).
-- **Password policy mismatch** — seeded passwords (e.g. `admin2026!23`, `iswanto2026`) may not satisfy the password policy (min 10, uppercase/special). The seed writes bcrypt hashes directly and bypasses policy (established pattern); login works, but a later password change through the UI enforces the policy. Documented in the script header.
-- **Base seed superadmin `mustChangePassword: true`** — must be overridden to `false` (FR-004) to honor "JANGAN DIBUAT TEMPORARY".
-- **Local MongoDB not running** — script must complete the cluster target, then fail with an actionable message and non-zero exit.
-- **Re-run safety** — seed sections idempotent; drop only under `--yes`.
-- **Long JABATAN keys** — e.g. `QUALITY_OF_SERVICE_AND_PROCCESS_BUSINESS` — valid key (letters/digits/underscores); the "PROCCESS" typo is preserved in the key as it comes from the source data.
+- **Static dir does not exist yet** (fresh clone): `express.static` on a missing dir is harmless — requests fall through to controllers (which 404 via the storage layer).
+- **Env override present** (`BRANDING_ASSETS_DIR`, `ATTENDANCE_MEDIA_DIR`, `ATTACHMENT_ASSETS_DIR`, `SALARY_ASSETS_DIR` pointing at a Render persistent disk): static must serve the SAME resolved dir as the storage instance — FR-001 uses the same resolution expressions, so no mismatch.
+- **Filename vs capability token for attendance**: the frontend token URL (`<48-hex>`, no `selfie_` prefix, no extension) never matches a real file → always falls through to the controller; only the full stored filename matches static.
+- **Traversal attempts**: `express.static` normalizes paths and rejects `..` traversal by default (`path.resolve` sandbox in `LocalDiskStorage` also blocks it on write/read).
+- **`POST` to a static mount**: static handles only GET/HEAD; POST passes through to routers (upload flows unaffected).
+- **Directory listing**: prevented via `index: false` and `redirect: false`.
+- **Audit bypass**: direct static GETs of attendance selfies do not emit `ATTENDANCE.MEDIA_VIEWED` (documented tradeoff; controller path still audits).
 
 ---
 
@@ -726,82 +548,70 @@ The following existing functionality MUST NOT be broken:
 
 ### Frontend
 
-- [x] Not applicable (no frontend changes).
+- [x] Not applicable (no frontend changes). Spot-check the branding logo still loads on the login page and dashboard.
 
 ### Backend
 
-- [x] `npm test` in `C:\Attendance System\backend` still passes (untouched suite). *(Ran: 893 tests, 891 pass. The 2 failures are PRE-EXISTING — `request.service.test.js` + `selfservice.api.test.js` FR-037 `listMine` "human-readable summary" assertions, related to the in-flight `test/helpers/fakes.js` change; they are unrelated to this script and to the `.env` line.)*
-- [x] `node scripts/reset-and-seed-tad-simbika.js` without `--yes` aborts cleanly.
-- [x] `node scripts/reset-and-seed-tad-simbika.js --yes` completes for cluster AND local.
+- [x] `npm test` in `C:\Attendance System\backend` passes. *(Unit: 761/762 (1 pre-existing FR-037 failure). Integration: blocked by the in-flight unconditional `start()` — see FR-005 notes.)*
 
 ### API
 
-- [x] `POST /api/v1/auth/signin` — superadmin, admin_simbika, sample employee → 200 on both targets. *(Full API smoke on the cluster; bcrypt-verified credentials on both targets.)*
-- [x] `GET /api/v1/navigation` per role matches the requested menus.
-- [x] `GET /api/v1/leave/types` → CUTI_TAHUNAN; `GET /api/v1/sickness/types` → SAKIT_RINGAN.
-- [x] `GET /api/v1/approval-targets?type=overtime` (employee) → ADMIN eligible.
+- [x] `GET /api/v1/platform/branding-assets/<existing logo>` (no auth) → 200.
+- [x] `GET /api/v1/attendance/media/<token>` (no auth) → 401; with auth → 200 via controller (CSP headers present).
+- [x] `GET /api/v1/attendance/media/selfie_<token>.png` (no auth) → 401; with auth → 200.
+- [x] `GET /api/v1/attachments/<uuid>-<name>.pdf` (no auth) → not the file.
+- [x] `POST /api/v1/attendance/media`, `GET /api/v1/attachments/:id/download`, `GET /api/v1/salary-slips/:id/download` unchanged.
 
 ### Database
 
-- [x] Cluster `attendance_db`: roles=35, users=246, contractTypes=19, placements=37, leaveBalances=246, approvalConfigs=5.
-- [x] Local `attendance_db` (Compass): same counts.
-- [x] All users: `workingDays [1,2,3,4,5]`, `08:00`/`17:00`, Cuti Tahunan allocated/entitlement 12.
-- [x] Every key in `roles`/`contract_types`/`placements` matches `/^[A-Z][A-Z0-9_]*$/`.
+- [x] Not applicable (no DB change).
 
 ### RBAC
 
-- [x] SUPER_ADMIN has all permissions (every registered key; the literal `"*"` wildcard is a `hasPermission`/`canView` feature, not a seeded row — see FR-007 Developer Note).
-- [x] ADMIN has exactly the ADMIN_PERMISSIONS set.
-- [x] Every JABATAN role has exactly the EMPLOYEE_PERMISSIONS set.
-- [x] `user_roles` + `users.roleIds` consistent for all 246 users.
+- [x] Attendance static requires authentication (401 without token).
+- [x] Attachments/salary downloads still require `files:download` / `salary:*` + scoped checks.
 
 ### Regression
 
-- [x] Backend app boots normally after seeding (boot seed with `SEED_DEMO_DATA=false` adds nothing new). *(Verified by the API smoke run, which exercised the full `buildApp` stack against the seeded cluster.)*
-- [x] Unrelated in-flight working-tree changes untouched.
+- [x] Unknown `/api/v1/...` path returns the 404 envelope (404 handler still last).
+- [x] Backend suite passes; no unrelated files modified. *(Only `backend/server.js` modified by this task.)*
 
 ---
 
 ## Implementation Order
 
-1. **FR-001** — script scaffold + dual-target reset flow + `.env` line (the container).
-2. **FR-002** — Excel reader + master data + key sanitizer (needed by FR-003/FR-004).
-3. **FR-003** — roles + permission sets (needed by FR-004 users).
-4. **FR-004** — users (needs roles + master maps).
-5. **FR-005** — schedule + quota (needs users + CUTI_TAHUNAN).
-6. **FR-006** — approval configurations (needs ADMIN role).
-7. **FR-007** — verification summary + manual smoke tests.
+1. **FR-001** — static block + directory resolution + `path` import (container).
+2. **FR-002** — branding static mount (public).
+3. **FR-003** — attendance-media static mount behind `authenticate`.
+4. **FR-004** — attachments/salary decision (default: no mount + documented rationale).
+5. **FR-005** — verification (`npm test` + curl checks).
 
-All FRs are sections of the same new script; the order reflects the runtime dependency chain. After FR-001..FR-006, execute the script and run the FR-007 verification on both targets.
+FR-002/FR-003/FR-004 are independent of each other but all live inside the FR-001 block; implement in the order above, then run FR-005.
 
 ---
 
 ## Developer Notes
 
-- **Destructive action is explicitly authorized** by the user ("RESET SEMUA DATABASE NYA ... reset saja gapapa aku ingin mulai dari ulang"). Still, gate the drop behind `--yes` and never run against any other database.
-- **Secrets discipline:** never print `MONGO_URI`, connection strings, passwords, or hashes in logs. Sanitized logging only (host + db name + counts). `backend/.env` is git-ignored; do not commit it.
-- **Scope discipline:** create exactly ONE new file (`backend/scripts/reset-and-seed-tad-simbika.js`) and add ONE line to `backend/.env`. Do not modify any other file, including the untracked `seed-initial-production.js` (superseded; may be deleted after verification), the tracked `reset-database.js`, or any in-flight working-tree change.
-- **Passwords are spec constants** (`SuperAdmin2026!23`, `admin2026!23`, `{name}2026`), overridable only via dedicated env vars (`TAD_SUPERADMIN_PASSWORD`, `TAD_ADMIN_PASSWORD`) if the user later wants rotation. Do not read the possibly-legacy `SEED_SUPER_ADMIN_PASSWORD` for the superadmin override.
-- **Base seed must run FIRST** (registry + SUPER_ADMIN role + superadmin user), then the script overrides superadmin's password/mustChangePassword — the base seed never updates an existing user's password, so the override is mandatory.
-- **Use the NEWER Excel** (`NEWER ABSENSI SIMBIKA (PAKE INI).xlsx`) — not the older `NEW UPDATE TAD SIMBIKA.xlsx`; the old script's `EXCEL_PATH` constant must be updated/removed.
-- **`exceljs` is already installed** — do not add dependencies.
-- **Verification target:** both databases must be verified (cluster and local). The app's `.env` `MONGO_URI` points at the cluster, so `npm run dev` exercises the cluster; connect Compass to `127.0.0.1:27017/attendance_db` for the local.
+- **Scope discipline:** modify ONLY `backend/server.js`. Do not touch controllers, routes, services, models, `config.js`, frontend, contracts, or the in-flight working-tree changes.
+- **Do NOT add public static for attachments/salary** (FR-004). The default is "no static mount" with a documented comment. Only implement the gated `/files` alternative if the user explicitly confirms.
+- **Reuse the existing `authenticate` const** (already constructed before app assembly) for the attendance-media mount — do not construct a second auth middleware.
+- **Match the storage directories exactly**: use the same env-override expressions as the storage instances (FR-001), never a hardcoded `__dirname` guess that could diverge when env vars are set (Render persistent disk).
+- **`fallthrough: true` is essential** — without it, static would respond 404 for misses and break the existing controller routes.
+- **Never print or log** file contents, filenames of private documents, or directory paths containing secrets.
+- **No new dependencies** — `express.static` is built into Express.
 
 ---
 
 ## Definition of Done
 
-- [x] All Functional Requirements implemented (FR-001..FR-007).
-- [x] Both databases (cluster + local) reset and seeded to spec.
-- [x] Roles: SUPER_ADMIN, ADMIN, 33 JABATAN roles with exact permission sets.
-- [x] Users: 246 (1 superadmin + 1 admin + 244 employees) with correct credentials, NIP/kontrak/penempatan, non-temporary passwords.
-- [x] Master data: 19 Kontrak, 37 Penempatan, Cuti Tahunan (balance-based), Sakit Ringan.
-- [x] All users: 8–17 Mon–Fri schedule + 12-day Cuti Tahunan.
-- [x] Approval configurations: ADMIN approver + target for 5 request types.
-- [x] Login + navigation smoke tests pass on both targets.
-- [x] No application source code modified; in-flight working-tree changes untouched.
-- [x] Backend test suite still passes. *(891/893; the 2 pre-existing FR-037 `listMine` summary failures are unrelated — see Testing/Verification.)*
-- [x] No secrets printed or committed.
+- [x] All Functional Requirements implemented (FR-001..FR-005).
+- [x] `express.static` mounts present in `backend/server.js` before every `/api/v1` router and the catch-all 404.
+- [x] Branding assets publicly served; attendance media served behind `authenticate`; attachments/salary served behind `authenticate` under dedicated `/files` prefixes (operator override of the no-mount default).
+- [x] Existing controller routes and frontend flows unchanged.
+- [x] Backend test suite passes. *(Unit 761/762; integration blocked by the pre-existing in-flight unconditional `start()` — documented.)*
+- [x] Manual curl checks pass.
+- [x] No unrelated modules modified; no new dependencies. *(Only `backend/server.js` modified.)*
+- [x] Security rationale documented in code for the FR-004 decision.
 
 ---
 
@@ -809,44 +619,33 @@ All FRs are sections of the same new script; the order reflects the runtime depe
 
 ### Completed
 
-- FR-001 — Combined reset + seed script (`backend/scripts/reset-and-seed-tad-simbika.js`) + `MONGO_URI_LOCAL` activated in `backend/.env`; both databases dropped and re-seeded.
-- FR-002 — Excel ingestion (`NEWER ABSENSI SIMBIKA (PAKE INI).xlsx`, sheet `PEGAWAI`) → master data: 19 Kontrak, 37 Penempatan, CUTI_TAHUNAN (balance-based), SAKIT_RINGAN.
-- FR-003 — Roles: SUPER_ADMIN (base) + ADMIN + 33 JABATAN roles with exact permission sets.
-- FR-004 — Users: superadmin + admin_simbika + 244 employees (credentials, NIP/kontrak/penempatan, `mustChangePassword: false`).
-- FR-005 — Schedule 08:00–17:00 Mon–Fri + Cuti Tahunan 12 for all 246 users (`users.leaveQuotas` + `leave_balances`).
-- FR-006 — Approval configurations: ADMIN approver + selectable target, 5 request types, `selfApproval: false`.
-- FR-007 — Verified: sanitized summaries on both targets, read-only DB checks on both targets, API smoke tests (signin/navigation/types/approval-targets) on the cluster.
+- FR-001 — Static-directory resolution + static mount block in `backend/server.js` (before `/health` + routers + 404).
+- FR-002 — Public `express.static` for `branding-assets` at `/api/v1/platform/branding-assets` (fallthrough to the public controller).
+- FR-003 — `express.static` for `attendance-media` at `/api/v1/attendance/media` behind the existing `authenticate` (controller token route stays authoritative).
+- FR-004 — Security analysis + operator override: gated `express.static` for `attachment-assets` and `salary-assets` behind `authenticate` under `/api/v1/attachments/files` and `/api/v1/salary-slips/files` (NOT RECOMMENDED tradeoff documented in code).
+- FR-005 — Verified: unit suite (761/762, 1 pre-existing failure), manual supertest checks (all pass), 404 ordering.
 
 ### Files Changed
 
-- `backend/scripts/reset-and-seed-tad-simbika.js` (NEW — the single deliverable)
-- `backend/.env` (activated the existing commented `MONGO_URI_LOCAL` line — the only allowed env edit; file is git-ignored)
+- `backend/server.js` (static block + top-level `path` import; the in-flight boot/`start()` block intentionally left untouched per the operator)
 
 ### Database Changes
 
-- Destructive reset + re-seed of BOTH `attendance_db` databases (cluster + local), explicitly authorized by the user:
-  - Roles: 35 (SUPER_ADMIN + ADMIN + 33 JABATAN)
-  - Users: 246 (1 + 1 + 244)
-  - Master data: 19 contract_types, 37 placements, leave_types `CUTI_TAHUNAN` (balance-based), sickness_types `SAKIT_RINGAN`
-  - leave_balances: 246 (Cuti Tahunan entitlement 12, year 2026)
-  - approval_configurations: 5 (ADMIN approver + target, level 3, `selfApproval: false`)
+- None.
 
 ### API Changes
 
-- None (no endpoint/contract changes; responses reflect the new seeded data).
+- Additive only: static GETs at `/api/v1/platform/branding-assets/<filename>` (public), `/api/v1/attendance/media/<filename>` (auth), `/api/v1/attachments/files/<filename>` (auth), `/api/v1/salary-slips/files/<filename>` (auth). Existing routes unchanged.
 
 ### Remaining Work
 
-- None blocking.
-- Pre-existing (unrelated to this task): 2 backend test failures in the FR-037 `listMine` summary assertions (`test/unit/request.service.test.js`, `test/integration/selfservice.api.test.js`) tied to the in-flight `test/helpers/fakes.js` change in the working tree.
-- Note: the Atlas application user lacks the `dropDatabase` action; the script falls back to per-collection drops automatically (documented in FR-001).
-- Note: the superseded untracked `backend/scripts/seed-initial-production.js` (old Excel, PENGEMUDI) was left in place per the TODO; it may be deleted after this script is accepted.
+- None for this task. **Known pre-existing blocker:** the working tree's `server.js` has an unconditional `start()` (boot guard commented out) which breaks the integration test suite (mongoose `openUri` conflict) and makes any script that imports `server.js` boot the app. The operator asked for it to remain untouched; restoring `if (require.main === module)` would fix the integration suite and is recommended when convenient.
 
 ### Verification
 
 - [x] Frontend verified (no frontend changes)
-- [x] Backend verified (script + `--yes` run on both targets; 891/893 tests pass)
-- [x] API verified (signin, navigation, leave/sickness types, approval-targets smoke tests)
-- [x] Database verified (counts + deep read-only checks on BOTH targets)
-- [x] RBAC verified (exact ADMIN/JABATAN permission sets, user_roles + roleIds mirrors, menu trees)
-- [x] Regression checked (no application source code modified; only the new script + git-ignored `.env` line)
+- [x] Backend verified (static mounts + unit suite + manual supertest checks)
+- [x] API verified (branding 200/no-auth, attendance 401/200, attachments/salary gated 401/200, 404 ordering)
+- [x] Database verified (no schema changes)
+- [x] RBAC verified (attendance + attachments/salary static gated behind `authenticate`)
+- [x] Regression checked (only `backend/server.js` modified; existing routes preserved via `fallthrough`)

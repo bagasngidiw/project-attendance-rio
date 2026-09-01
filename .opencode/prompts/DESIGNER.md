@@ -112,29 +112,23 @@ Do not blindly follow outdated context.
 
 # USER REQUEST FORMAT
 
-coba baca file di dalam ai-project-context/NEWER ABSENSI SIMBIKA (PAKE INI).xlsx
-RESET SEMUA DATABASE NYA, ACCESS ENV MONGO_URI KU agar bisa me-reset mongodb cluster database ku dan database local mongodbcompass, reset saja gapapa aku ingin mulai dari ulang, akses env, config, tidak apa apa, aku ingin kamu create collection untuk mongodb, karena sekarang sudah ke mongodb cluster (jngn lupa untuk database local mongodbcompass).
-coba buat data collection yang berhubungan dengan accessing websitenya, seperti role, user, akses menu, berikut ketentuannya :
+Please inspect the codebase (specifically router definitions, controller logic, and Multer file storage configurations) to correctly expose static file directories in Express.
 
-aku ingin kau membuat ROLE
-SUPERADMIN
-ADMIN
-(LALU AMBIL NAMA ROLE-ROLE NYA DARI ai-project-context/NEWER ABSENSI SIMBIKA (PAKE INI).xlsx) baca dari kolom JABATAN (kolom E)
+Target Directories in Root:
+- attachment-assets
+- attendance-media
+- branding-assets
+- salary-assets
 
-- Superadmin (username : superadmin) : dapat melihat semuanya, set password nya menjadi SuperAdmin2026!23 (JANGAN DIBUAT TEMPORARY YA PASSWORDNYA).
-kosongkan data nip, kontrak dan penempatan
-
-- ADMIN - pasangkan role ini dengan pengguna : (username : admin_simbika) : (password : admin2026!23 (JANGAN DIBUAT TEMPORARY YA PASSWORDNYA)) dapat melihat menu : Dashboard, Slip Gaji, Absensi, Lembur, Perjalanan Dinas, Izin, Sakit, Cuti, Pengguna, Laporan, Profil, Notifikasi(CENTANG SEMUANYA pada fitur access nya seperti view:all seperti itu, coba baca context databasenya ya agar tidak salah).
-kosongkan data nip, kontrak dan penempatan
-
-- (ROLE YG DIAMBIL DARI KOLOM E JABATAN) - pasangkan role ini dengan pengguna : (username: BACA DARI FILE ai-project-context/NEWER ABSENSI SIMBIKA (PAKE INI).xlsx pada column D, username: {Nama Pegawai}_2026) dengan password: {nama pegawai lowercase}2026. JANGAN BUAT TEMPORARY YA PASSWORDNYA, dengan NIP baca dari column C. ROLE dapat melihat : Dashboard karyawan, Absensi (jangan ceklis semua, bisa kirim permintaan, upload file dan melihat data sendiri), Lembur (jangan ceklis semua, bisa kirim permintaan, upload file dan melihat data sendiri), Perjalanan Dinas (jangan ceklis semua, bisa kirim permintaan, upload file dan melihat data sendiri),Izin (jangan ceklis semua, bisa kirim permintaan, upload file dan melihat data sendiri), Sakit (jangan ceklis semua, bisa kirim permintaan, upload file dan melihat data sendiri) Cuti (jangan ceklis semua, bisa kirim permintaan, upload file dan melihat data sendiri), Permintaan Saya (dapat melihat data sendiri) dan Profil (dapat mengubah data diri pribadi), dan slip gaji hanya melihat data diri sendiri
-
-BUAT DATA MASTER Kontrak dan Penempatan (BACA DARI FILE ai-project-context/NEWER ABSENSI SIMBIKA (PAKE INI).xlsx pada column B untuk Kontrak dan Column F untuk Penempatan)
-lalu BACA KESELURUHAN FILE ai-project-context/NEWER ABSENSI SIMBIKA (PAKE INI).xlsx UNTUK pasangkan data Kontrak dan Penempatan pada user dengan role YG DIAMBIL DARI KOLOM E JABATAN (JIKA ada data penempatan yang kosong dengan usernya, kosongkan saja, soalnya nanti bisa di edit kembali)
-
-BUAT DATA MASTER Tipe Sakit (Sakit Ringan), Tipe Cuti (Cuti Tahunan) menceklis yang berjatah (memakai saldo karyawan (aku gatau nama field nya apa))
-
-UNTUK SEMUA DATA PENGGUNA, BUAT CUTINYA 12 HARI, Jam kerja 8 - 17, hari kerja senin-jumat
+Instructions:
+1. Search where files are uploaded/retrieved for each domain (e.g., Attendance, Salary, Platform/Branding, Attachments).
+2. Identify the exact URL prefix expected by the frontend for each resource type under `/api/v1/`.
+3. Mount `express.static` for each directory matching its corresponding route prefix, using `path.join(__dirname, '<folder_name>')`.
+   Example pattern:
+   - app.use('/api/v1/platform/branding-assets', express.static(path.join(__dirname, 'branding-assets')));
+   - app.use('/api/v1/attendance/...', express.static(path.join(__dirname, 'attendance-media')));
+   (Verify and use the actual route paths found in the code).
+4. Ensure these `express.static` declarations are declared BEFORE any catch-all 404 or router fallbacks in `server.js` / application builder.
 
 # ISSUE UNDERSTANDING
 
