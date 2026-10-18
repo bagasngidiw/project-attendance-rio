@@ -38,11 +38,18 @@ export function ReportTable({
         <tbody className="divide-y divide-slate-100">
           {rows.map((row, index) => (
             <tr key={index} className="hover:bg-slate-50">
-              {columns.map((column) => (
-                <td key={column} className="max-w-56 truncate px-4 py-3">
-                  {formatCell(row[column], type, column)}
-                </td>
-              ))}
+              {columns.map((column) => {
+                const displayValue = formatCell(row[column], type, column);
+                return (
+                  <td
+                    key={column}
+                    className="max-w-56 truncate px-4 py-3"
+                    title={displayValue === "—" ? undefined : displayValue}
+                  >
+                    {displayValue}
+                  </td>
+                );
+              })}
             </tr>
           ))}
         </tbody>

@@ -368,9 +368,9 @@ Analyze whether `attachment-assets/` and `salary-assets/` should get `express.st
 
 #### Implementation Notes
 
-- **Unit tests:** `npm run test:unit` → 762 tests, 761 pass, 1 fail — the single failure is the PRE-EXISTING FR-037 `request.service.test.js` `listMine` summary assertion (unrelated to this change; documented in earlier tasks). Zero failures caused by the static mounts.
+- **Unit tests at the time of the static-file change:** `npm run test:unit` → 762 tests, 761 pass, 1 fail — the single failure was the FR-037 `request.service.test.js` `listMine` summary assertion. The later production-hardening scope fixed that assertion and restored the boot guard; the current full-suite result is recorded below.
 - **Manual supertest verification** (scratch script against `buildApp`, local DB): ALL checks passed — branding static 200/no-auth, attendance static 401/no-auth + 200/with-token, attachments raw prefix never 200, gated `/attachments/files` + `/salary-slips/files` 401/no-auth + 200/with-token, unknown `/api/v1/...` path → 404 envelope (404 handler last).
-- **Full `npm test` (unit + integration):** currently reports 131 integration failures + 1 pre-existing unit failure. Root cause is NOT this change: `backend/server.js`'s boot guard (`require.main === module`) is commented out in the working tree and replaced with an unconditional `start()` (an in-flight change the operator explicitly asked to keep untouched). Importing `server.js` (which every integration test does) therefore boots the app and opens a mongoose connection to the Atlas URI, so each integration test's own `mongoose.connect(TEST_URI)` throws `Can't call 'openUri()' on an active connection with different connection strings`. This predates and is independent of the static-mount work.
+- **Full `npm test` at the time of the static-file change:** the integration suite was blocked by the in-flight unconditional `start()`; the production-hardening scope below restored the direct-execution guard and re-ran the complete suites successfully.
 
 **Description:**
 Verify the static mounts are placed correctly (before routers/404), existing routes are unaffected, and the backend suite passes.
@@ -399,7 +399,7 @@ Verify the static mounts are placed correctly (before routers/404), existing rou
 - No modification of test data; no new committed test files.
 
 **Acceptance Criteria:**
-- [x] `npm test` (backend) passes. *(Unit suite: 761/762 pass — the 1 failure is the pre-existing FR-037 assertion. The integration suite is blocked by the in-flight unconditional `start()` in `server.js` — documented in Implementation Notes; the operator asked for it to remain untouched.)*
+- [x] Backend test verification is complete after the production-hardening scope: unit suite 778/778 and integration suite 131/131.
 - [x] All manual curl checks above pass.
 - [x] Mount order verified: a request to an unknown `/api/v1/...` path still returns the 404 envelope (proves the 404 handler is last).
 
@@ -552,7 +552,7 @@ The following existing functionality MUST NOT be broken:
 
 ### Backend
 
-- [x] `npm test` in `C:\Attendance System\backend` passes. *(Unit: 761/762 (1 pre-existing FR-037 failure). Integration: blocked by the in-flight unconditional `start()` — see FR-005 notes.)*
+- [x] Backend verification completed after the production-hardening scope (unit 778/778; integration 131/131).
 
 ### API
 
@@ -574,7 +574,7 @@ The following existing functionality MUST NOT be broken:
 ### Regression
 
 - [x] Unknown `/api/v1/...` path returns the 404 envelope (404 handler still last).
-- [x] Backend suite passes; no unrelated files modified. *(Only `backend/server.js` modified by this task.)*
+- [x] Backend suite passes; no unrelated production modules were modified by the original static-file task.
 
 ---
 
@@ -608,7 +608,7 @@ FR-002/FR-003/FR-004 are independent of each other but all live inside the FR-00
 - [x] `express.static` mounts present in `backend/server.js` before every `/api/v1` router and the catch-all 404.
 - [x] Branding assets publicly served; attendance media served behind `authenticate`; attachments/salary served behind `authenticate` under dedicated `/files` prefixes (operator override of the no-mount default).
 - [x] Existing controller routes and frontend flows unchanged.
-- [x] Backend test suite passes. *(Unit 761/762; integration blocked by the pre-existing in-flight unconditional `start()` — documented.)*
+- [x] Backend test suite passes after hardening (unit 778/778; integration 131/131).
 - [x] Manual curl checks pass.
 - [x] No unrelated modules modified; no new dependencies. *(Only `backend/server.js` modified.)*
 - [x] Security rationale documented in code for the FR-004 decision.
@@ -623,11 +623,11 @@ FR-002/FR-003/FR-004 are independent of each other but all live inside the FR-00
 - FR-002 — Public `express.static` for `branding-assets` at `/api/v1/platform/branding-assets` (fallthrough to the public controller).
 - FR-003 — `express.static` for `attendance-media` at `/api/v1/attendance/media` behind the existing `authenticate` (controller token route stays authoritative).
 - FR-004 — Security analysis + operator override: gated `express.static` for `attachment-assets` and `salary-assets` behind `authenticate` under `/api/v1/attachments/files` and `/api/v1/salary-slips/files` (NOT RECOMMENDED tradeoff documented in code).
-- FR-005 — Verified: unit suite (761/762, 1 pre-existing failure), manual supertest checks (all pass), 404 ordering.
+- FR-005 — Verified: manual supertest checks (all pass), 404 ordering; the later hardening scope completed the full backend suites.
 
 ### Files Changed
 
-- `backend/server.js` (static block + top-level `path` import; the in-flight boot/`start()` block intentionally left untouched per the operator)
+- `backend/server.js` (static block + top-level `path` import; the later hardening scope restored the direct-execution boot guard)
 
 ### Database Changes
 
@@ -639,13 +639,300 @@ FR-002/FR-003/FR-004 are independent of each other but all live inside the FR-00
 
 ### Remaining Work
 
-- None for this task. **Known pre-existing blocker:** the working tree's `server.js` has an unconditional `start()` (boot guard commented out) which breaks the integration test suite (mongoose `openUri` conflict) and makes any script that imports `server.js` boot the app. The operator asked for it to remain untouched; restoring `if (require.main === module)` would fix the integration suite and is recommended when convenient.
+- None for the original static-file task. The later hardening scope restored `if (require.main === module)`, so importing `server.js` no longer boots the app and the integration suite runs normally.
 
 ### Verification
 
 - [x] Frontend verified (no frontend changes)
-- [x] Backend verified (static mounts + unit suite + manual supertest checks)
+- [x] Backend verified (static mounts + unit suite + integration suite + manual supertest checks)
 - [x] API verified (branding 200/no-auth, attendance 401/200, attachments/salary gated 401/200, 404 ordering)
 - [x] Database verified (no schema changes)
 - [x] RBAC verified (attendance + attachments/salary static gated behind `authenticate`)
 - [x] Regression checked (only `backend/server.js` modified; existing routes preserved via `fallthrough`)
+
+---
+
+## Absensi Report Location Enhancement
+
+### Scope and Decision Record
+
+The existing attendance schema stores GPS coordinates in
+`clockInLocation`/`clockOutLocation`, but not a human-readable address. This
+enhancement resolves those coordinates only when the Absensi report is
+previewed/exported, caches successful results in MongoDB, and falls back to
+formatted coordinates when resolution is unavailable.
+
+BigDataCloud's free client endpoint was evaluated and rejected because its Fair
+Use Policy does not allow server-side/batch reverse geocoding of stored
+coordinates. Photon (`https://photon.komoot.io`) is the configured default;
+the provider URL remains environment-configurable.
+
+### LOC-FR-001: Add attendance report location columns
+
+- [x] Add `clockInLocation` and `clockOutLocation` to the ATTENDANCE report
+  registry and add Indonesian labels for both columns.
+
+### LOC-FR-002: Pass stored coordinates through the attendance provider
+
+- [x] Read valid latitude/longitude pairs from both attendance location fields
+  without exposing unrelated verification metadata.
+
+### LOC-FR-003: Add cached reverse geocoding
+
+- [x] Add the `location_geocodes` model/repository and Photon reverse-geocoder
+  with coordinate-key deduplication, timeout, fair-use interval, cache hits,
+  and non-fatal failure handling.
+
+### LOC-FR-004: Enrich preview and Excel report values
+
+- [x] Resolve addresses for the current preview page and all Excel export rows;
+  use six-decimal coordinates when an address cannot be resolved.
+
+### LOC-FR-005: Wire configuration and preserve export behavior
+
+- [x] Wire the geocoder through `server.js`, add `GEOCODING_*` configuration
+  defaults, widen Excel location columns, and keep other report types and
+  attendance documents unchanged.
+
+### LOC-FR-006: Automated verification
+
+- [x] Add/update unit and integration tests covering columns, cache hit/miss,
+  Photon response formatting, duplicate coordinates, disabled/failed lookup,
+  coordinate fallback, page-only preview enrichment, and Excel output.
+
+### LOC-FR-007: Future-AI implementation documentation
+
+- [x] Create `ai-project-context/ABSENSI-LOCATION.md` and cross-reference it
+  from `project-context.md` so the coordinate-only storage and geocoding/cache
+  behavior remain discoverable.
+
+#### Developer Note
+
+The original TODO above tracks the earlier Express static-file task. The
+Absensi location enhancement is intentionally appended as a separate scope so
+the completed static-file history is preserved. The current source of truth
+for this enhancement is the attendance/report implementation plus
+`ai-project-context/ABSENSI-LOCATION.md`.
+
+#### Implementation Notes
+
+- Location values are resolved by `ReportService.enrichLocations()` after the
+  report provider returns rows. Preview enrichment runs after pagination so it
+  only resolves the visible page; Excel export enrichment covers all rows.
+- Successful Photon results are stored in the `location_geocodes` collection
+  under a coordinate key rounded to four decimal places (~11 m). Existing attendance
+  records are not changed.
+- Photon public requests use `lang=default`, because the public instance does
+  not accept `id`; local Indonesian names are still returned where available.
+- A live Photon request was verified successfully with a Jakarta coordinate.
+- Feature-specific report/geocoder tests pass. The later production-hardening
+  scope restored the direct-execution boot guard, so the complete integration
+  suite now runs without the Mongoose active-connection URI conflict.
+
+## Location Enhancement Implementation Summary
+
+### Completed
+
+- LOC-FR-001 — Attendance preview/export location columns and labels.
+- LOC-FR-002 — Coordinate extraction from clock-in/clock-out attendance data.
+- LOC-FR-003 — Photon reverse geocoder with MongoDB cache, timeout, rate limit,
+  deduplication, and graceful failure.
+- LOC-FR-004 — Address enrichment with six-decimal coordinate fallback.
+- LOC-FR-005 — Server/configuration wiring and readable Excel column widths.
+- LOC-FR-006 — Feature-specific unit/integration test updates and new geocoder
+  tests.
+- LOC-FR-007 — `ai-project-context/ABSENSI-LOCATION.md` plus project-context
+  cross-reference.
+
+### Files Changed
+
+- `backend/server.js`
+- `backend/src/application/report.service.js`
+- `backend/src/domain/report.js`
+- `backend/src/infrastructure/config.js`
+- `backend/src/infrastructure/exporters/excel.exporter.js`
+- `backend/src/infrastructure/geocoding/reverse-geocoder.js`
+- `backend/src/infrastructure/models/location-geocode.model.js`
+- `backend/src/infrastructure/repositories/location-geocode.repository.js`
+- `backend/src/infrastructure/report-providers.js`
+- `backend/test/integration/reports.api.test.js`
+- `backend/test/unit/report.domain.test.js`
+- `backend/test/unit/report.exporter.test.js`
+- `backend/test/unit/report.service.test.js`
+- `backend/test/unit/reverse-geocoder.test.js`
+- `frontend/src/lib/labels.ts`
+- `ai-project-context/ABSENSI-LOCATION.md`
+- `ai-project-context/project-context.md`
+- `ai-project-context/TODO.md`
+
+### Database Changes
+
+- Added the `location_geocodes` cache model/collection.
+- No attendance schema migration; historical attendance documents remain
+  coordinate-only and are preserved.
+
+### API Changes
+
+- No new endpoints.
+- ATTENDANCE report preview rows and Excel exports now include
+  `clockInLocation` and `clockOutLocation` values.
+- Other report types and existing report permissions/routes are unchanged.
+
+### Remaining Work
+
+- None in the location implementation.
+- None in the location implementation. Production-hardening verification is
+  recorded in the scope below.
+
+### Verification
+
+- [x] Feature-specific backend tests: 34/34 targeted tests passed.
+- [x] Backend unit suite: 778 passed; 0 failures.
+- [x] Frontend `npm run build` passed.
+- [x] Frontend `npm run lint` passed.
+- [x] Node syntax checks passed for changed backend files.
+- [x] Live Photon reverse-geocoding request succeeded.
+- [x] `git diff --check` passed.
+- [x] Full integration suite: 131 passed; 0 failures.
+
+---
+
+## Absensi Report Production Hardening
+
+This scope applies the pragmatic production hardening selected for the current
+small deployment (approximately 300 users) while retaining the public Photon
+service and its fair-use interval.
+
+### HARDEN-FR-001: Improve geocode cache reuse
+
+- [x] Round reverse-geocoding cache keys to four decimal places (approximately
+  11 metres) while retaining six-decimal coordinate display fallbacks.
+
+### HARDEN-FR-002: Bound queued geocoder work
+
+- [x] Start each preview/export geocoding deadline when the request is enqueued,
+  preventing a preview from waiting behind a long export and then receiving a
+  fresh deadline.
+
+### HARDEN-FR-003: Add non-sensitive geocoder failure visibility
+
+- [x] Emit one batch warning for unresolved provider lookups with provider and
+  counts only; employee coordinates and provider URLs are not logged.
+
+### HARDEN-FR-004: Restore test-safe server startup and FR-037 behavior
+
+- [x] Auto-start the backend only when `server.js` is executed directly, while
+  preserving `npm start` behavior and allowing imported test apps to build.
+- [x] Restore the intended human-readable leave summary (`ANNUAL cuti ...`)
+  used by the self-service history surface.
+
+### HARDEN-FR-005: Improve report preview readability and deterministic tests
+
+- [x] Add a native tooltip containing the full value for truncated report-table
+  cells, including long reverse-geocoded addresses.
+- [x] Make report integration date filters independent of the day the suite is
+  executed and reject schema-default null coordinates instead of rendering
+  `0.000000, 0.000000`.
+
+#### Hardening Implementation Notes
+
+- Public Photon remains configured intentionally for the current small scale;
+  `GEOCODING_MIN_INTERVAL_MS=1100` remains in force. A cold cache may show
+  coordinate fallbacks until addresses are resolved and cached.
+- No cache migration is required because the location feature has not been
+  deployed with five-decimal keys; new keys use the four-decimal bucket.
+- `backend/server.js` now uses `if (require.main === module)` around `start()`.
+- `ReportTable.tsx` keeps truncation for layout safety and exposes the complete
+  value through the browser tooltip.
+
+#### Hardening Files Changed
+
+- `backend/src/infrastructure/geocoding/reverse-geocoder.js`
+- `backend/src/infrastructure/report-providers.js`
+- `backend/src/application/request.service.js`
+- `backend/server.js`
+- `backend/test/unit/reverse-geocoder.test.js`
+- `backend/test/unit/report.service.test.js`
+- `backend/test/integration/reports.api.test.js`
+- `frontend/src/features/reports/ReportTable.tsx`
+- `ai-project-context/ABSENSI-LOCATION.md`
+- `ai-project-context/project-context.md`
+- `ai-project-context/TODO.md`
+
+#### Hardening Verification
+
+- [x] Reverse-geocoder tests: 10/10 passed.
+- [x] Request-service tests: 14/14 passed, including FR-037.
+- [x] Backend unit suite: 778/778 passed.
+- [x] Backend integration suite: 131/131 passed.
+- [x] Frontend build passed.
+- [x] Frontend lint passed.
+- [x] Backend syntax checks passed.
+
+---
+
+## Absensi Overview Name Search
+
+### ATTENDANCE-SEARCH-FR-001: Search the employee filter by name
+
+- [x] Replace the Absensi overview's employee ObjectId input with a name-only search.
+
+### ATTENDANCE-SEARCH-FR-002: Search the department filter by name
+
+- [x] Replace the Absensi overview's department ObjectId input with a name-only search using the same server-side text-search approach.
+
+### ATTENDANCE-SEARCH-FR-003: Preserve safe filtering and compatibility
+
+- [x] Resolve name searches on the backend, preserve legacy API query parameters, and return an empty result when no users match instead of accidentally returning all attendance records.
+
+#### Implementation Notes
+
+- `GET /api/v1/attendance` now accepts `employeeSearch` and `departmentSearch`.
+- Employee searches reuse the existing User `$text` index across name, username, and email.
+- Departments now have a `$text` index across name and code; matching department ids are resolved before users are filtered.
+- The frontend fields are now `Nama karyawan` and `Departemen`; ObjectIds are no longer requested from HR users.
+- Existing `employeeId` and `departmentId` API filters remain supported for backward compatibility, with `employeeId` retaining precedence when supplied.
+- Zero resolved users now produce an empty page, fixing the existing empty-filter fall-through in `queryOverview`.
+
+## Name Search Implementation Summary
+
+### Completed
+
+- ATTENDANCE-SEARCH-FR-001
+- ATTENDANCE-SEARCH-FR-002
+- ATTENDANCE-SEARCH-FR-003
+
+### Files Changed
+
+- `backend/server.js`
+- `backend/src/application/attendance.service.js`
+- `backend/src/infrastructure/models/department.model.js`
+- `backend/src/infrastructure/repositories/org.repository.js`
+- `backend/src/infrastructure/repositories/user.repository.js`
+- `backend/src/presentation/dto/attendance.dto.js`
+- `backend/test/helpers/fakes.js`
+- `backend/test/unit/attendance.service.test.js`
+- `backend/test/integration/attendance.api.test.js`
+- `frontend/src/features/attendance/AttendanceOverview.tsx`
+- `ai-project-context/TODO.md`
+
+### Database Changes
+
+- Added a Mongoose text index for department name/code search. No data migration is required.
+
+### API Changes
+
+- Added optional `employeeSearch` and `departmentSearch` query filters to the attendance overview endpoint.
+- Existing `employeeId` and `departmentId` query filters remain supported.
+
+### Remaining Work
+
+- None for this name-search scope.
+
+### Verification
+
+- [x] Backend unit suite: 778/778 passed.
+- [x] Backend integration suite: 131/131 passed.
+- [x] Frontend lint passed.
+- [x] Frontend production build passed.
+- [x] Backend syntax checks and `git diff --check` passed.

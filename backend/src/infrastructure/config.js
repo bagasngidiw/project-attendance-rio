@@ -85,6 +85,19 @@ function createConfig() {
       },
     },
 
+    // Report-time reverse geocoding for attendance coordinates. Addresses are
+    // cached separately; attendance documents remain coordinate-only.
+    geocoding: {
+      enabled: readEnv("GEOCODING_ENABLED", "true") === "true",
+      provider: readEnv("GEOCODING_PROVIDER", "photon"),
+      providerUrl: readEnv("GEOCODING_PROVIDER_URL", "https://photon.komoot.io"),
+      language: readEnv("GEOCODING_LANGUAGE", "default"),
+      timeoutMs: readNumber("GEOCODING_TIMEOUT_MS", 4000),
+      minIntervalMs: readNumber("GEOCODING_MIN_INTERVAL_MS", 1100),
+      previewDeadlineMs: readNumber("GEOCODING_PREVIEW_DEADLINE_MS", 4000),
+      exportDeadlineMs: readNumber("GEOCODING_EXPORT_DEADLINE_MS", 20000),
+    },
+
     rateLimit: {
       windowMs: readNumber("RATE_LIMIT_WINDOW_MS", 15 * 60 * 1000),
       maxRequests: readNumber("RATE_LIMIT_MAX", 100),

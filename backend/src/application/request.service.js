@@ -616,7 +616,7 @@ function summarizeRequest(request, leaveTypeName = null, sicknessTypeName = null
   const p = request.payload ?? {};
   if (request.type === "LEAVE") {
     const name = leaveTypeName || p.leaveTypeName || p.leaveType || "";
-    return `${name} ${p.startDate ?? ""}–${p.endDate ?? ""}`.trim();
+    return `${name} cuti ${p.startDate ?? ""}–${p.endDate ?? ""}`.trim();
   }
   if (request.type === "OVERTIME") {
     return `Lembur ${p.date ?? ""} (${p.startTime ?? ""}–${p.endTime ?? ""})`.trim();

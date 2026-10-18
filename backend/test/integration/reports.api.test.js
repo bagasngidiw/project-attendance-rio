@@ -19,12 +19,18 @@ const { seedDatabase } = require("../../src/infrastructure/seed/seed");
 
 const TEST_URI =
   process.env.MONGO_URI_REPORTS_TEST || "mongodb://127.0.0.1:27017/attendance_reports_test";
+// Request report date filters apply to submittedAt. Use a stable broad range
+// so the tests do not depend on the calendar date on which they run.
+const REPORT_FROM = "2000-01-01";
+const REPORT_TO = "2100-01-01";
 
 let app;
 let config;
 
 before(async () => {
   config = createConfig();
+  // Integration tests must not depend on the public Photon service.
+  config.geocoding.enabled = false;
   await mongoose.connect(TEST_URI);
   await mongoose.connection.dropDatabase();
   const { app: built } = buildApp(config);
@@ -103,12 +109,21 @@ test("F4: HR previews a filtered leave report; results match the filters", async
     types.body.data.items.some((t) => t.key === "SAKIT" && t.columns.includes("sicknessType")),
     "SAKIT report type present"
   );
+  assert.ok(
+    types.body.data.items.some(
+      (t) =>
+        t.key === "ATTENDANCE" &&
+        t.columns.includes("clockInLocation") &&
+        t.columns.includes("clockOutLocation")
+    ),
+    "attendance report includes both location columns"
+  );
 
   // Broad date range matches the freshly submitted leave.
   const preview = await request(app)
     .get("/api/v1/reports/leave")
     .set("Authorization", `Bearer ${hr.accessToken}`)
-    .query({ from: "2026-08-01", to: "2026-08-31", status: "PENDING" });
+    .query({ from: REPORT_FROM, to: REPORT_TO, status: "PENDING" });
   assert.equal(preview.status, 200);
   assert.equal(preview.body.data.total, 1);
   assert.equal(preview.body.data.items[0].leaveType, "Annual Leave");
@@ -137,7 +152,7 @@ test("F8: SAKIT report preview shows the sickness type name (not an ObjectId)", 
   const preview = await request(app)
     .get("/api/v1/reports/sakit")
     .set("Authorization", `Bearer ${hr.accessToken}`)
-    .query({ from: "2026-08-01", to: "2026-08-31" });
+    .query({ from: REPORT_FROM, to: REPORT_TO });
   assert.equal(preview.status, 200);
   assert.equal(preview.body.data.total, 1);
   assert.equal(preview.body.data.items[0].sicknessType, "Demam", "name resolved via repository");
@@ -155,7 +170,7 @@ test("F9: employeeSearch filters rows to matching name/username users", async ()
   const all = await request(app)
     .get("/api/v1/reports/leave")
     .set("Authorization", `Bearer ${hr.accessToken}`)
-    .query({ from: "2026-08-01", to: "2026-08-31" });
+    .query({ from: REPORT_FROM, to: REPORT_TO });
   assert.equal(all.body.data.total, 2, "two leave rows without a search");
 
   // The test DB is dropped per-test; ensure the user schema's text index
@@ -166,7 +181,7 @@ test("F9: employeeSearch filters rows to matching name/username users", async ()
   const searched = await request(app)
     .get("/api/v1/reports/leave")
     .set("Authorization", `Bearer ${hr.accessToken}`)
-    .query({ from: "2026-08-01", to: "2026-08-31", employeeSearch: "bob" });
+    .query({ from: REPORT_FROM, to: REPORT_TO, employeeSearch: "bob" });
   assert.equal(searched.status, 200, JSON.stringify(searched.body));
   assert.equal(searched.body.data.total, 1, "only employee.bob matches");
 });
@@ -179,7 +194,7 @@ test("F5: Excel export streams a real .xlsx and records REPORT.EXPORTED", async 
   const excel = await request(app)
     .get("/api/v1/reports/leave/export")
     .set("Authorization", `Bearer ${hr.accessToken}`)
-    .query({ format: "excel", from: "2026-08-01", to: "2026-08-31" });
+    .query({ format: "excel", from: REPORT_FROM, to: REPORT_TO });
   assert.equal(excel.status, 200);
   assert.match(excel.headers["content-type"], /spreadsheetml/);
   assert.match(excel.headers["content-disposition"], /leave-report\.xlsx/);
@@ -189,7 +204,7 @@ test("F5: Excel export streams a real .xlsx and records REPORT.EXPORTED", async 
   const pdf = await request(app)
     .get("/api/v1/reports/leave/export")
     .set("Authorization", `Bearer ${hr.accessToken}`)
-    .query({ format: "pdf", from: "2026-08-01", to: "2026-08-31" });
+    .query({ format: "pdf", from: REPORT_FROM, to: REPORT_TO });
   assert.equal(pdf.status, 400, "format=pdf rejected");
 
   // The export is recorded with actor + format.
@@ -269,4 +284,6 @@ test("F7: attendance report preview reflects the attendance module data", async 
   assert.equal(preview.status, 200);
   assert.equal(preview.body.data.total, 1);
   assert.equal(preview.body.data.items[0].date, clockIn.body.data.date);
+  assert.equal(preview.body.data.items[0].clockInLocation, "-6.200000, 106.800000");
+  assert.equal(preview.body.data.items[0].clockOutLocation, null);
 });

@@ -29,6 +29,7 @@ function makeService(overrides = {}) {
   const service = new AttendanceService({
     attendanceRepository: fakes.attendanceRepository,
     userRepository: fakes.userRepository,
+    orgRepository: fakes.orgRepository,
     requestRepository: fakes.requestRepository,
     correctionModel: fakes.attendanceCorrectionModel,
     pendingSummaryService,
@@ -133,14 +134,66 @@ test("getByIdScoped: owner and HR can read; unrelated users get 404", async () =
 
 test("listOverview requires view-all and supports filters", async () => {
   const { service, fakes } = makeService();
-  seedUser(fakes, { id: "u_emp", name: "Emp" });
-  seedUser(fakes, { id: "u_other", name: "Other" });
+  const engineering = await fakes.orgRepository.createDepartment({
+    name: "Engineering",
+    code: "ENG",
+  });
+  const operations = await fakes.orgRepository.createDepartment({
+    name: "Operations",
+    code: "OPS",
+  });
+  seedUser(fakes, { id: "u_emp", name: "Emp", departmentId: engineering.id });
+  seedUser(fakes, { id: "u_other", name: "Other", departmentId: operations.id });
   await service.clockIn("u_emp", {});
   await service.clockIn("u_other", {});
 
   const overview = await service.listOverview({ actorId: "u_hr", canViewAll: true, filters: {} });
   assert.equal(overview.total, 2);
   assert.ok(overview.items[0].user, "overview enriched with owner identity");
+
+  const byEmployeeName = await service.listOverview({
+    actorId: "u_hr",
+    canViewAll: true,
+    filters: { employeeSearch: "Emp" },
+  });
+  assert.equal(byEmployeeName.total, 1);
+  assert.equal(byEmployeeName.items[0].user.name, "Emp");
+
+  const byDepartmentName = await service.listOverview({
+    actorId: "u_hr",
+    canViewAll: true,
+    filters: { departmentSearch: "Engineering" },
+  });
+  assert.equal(byDepartmentName.total, 1);
+  assert.equal(byDepartmentName.items[0].user.name, "Emp");
+
+  const byBothNames = await service.listOverview({
+    actorId: "u_hr",
+    canViewAll: true,
+    filters: { employeeSearch: "Emp", departmentSearch: "Engineering" },
+  });
+  assert.equal(byBothNames.total, 1);
+
+  const employeeMiss = await service.listOverview({
+    actorId: "u_hr",
+    canViewAll: true,
+    filters: { employeeSearch: "No Such Employee" },
+  });
+  assert.equal(employeeMiss.total, 0);
+
+  const departmentMiss = await service.listOverview({
+    actorId: "u_hr",
+    canViewAll: true,
+    filters: { departmentSearch: "No Such Department" },
+  });
+  assert.equal(departmentMiss.total, 0);
+
+  const legacyDepartmentMiss = await service.listOverview({
+    actorId: "u_hr",
+    canViewAll: true,
+    filters: { departmentId: "missing-department" },
+  });
+  assert.equal(legacyDepartmentMiss.total, 0);
 
   await assert.rejects(
     service.listOverview({ actorId: "u_emp", canViewAll: false, filters: {} }),

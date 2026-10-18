@@ -13,11 +13,13 @@ const { HashChainVerifier } = require("../../src/infrastructure/hash-chain-verif
 const {
   ReportProviderRegistry,
   registerReportProviders,
+  reportLocation,
 } = require("../../src/infrastructure/report-providers");
 const { ReportService } = require("../../src/application/report.service");
+const { coordinateKey } = require("../../src/infrastructure/geocoding/reverse-geocoder");
 const { PermissionDeniedError, NotFoundError, ReportUnavailableError } = require("../../src/domain/errors");
 
-function makeService(registerAll = true) {
+function makeService(registerAll = true, { reverseGeocoder = null, geocoding = {} } = {}) {
   const fakes = buildFakes();
   const chainVerifier = new HashChainVerifier({
     auditRepository: fakes.auditRepository,
@@ -46,6 +48,8 @@ function makeService(registerAll = true) {
     registry,
     userRepository: fakes.userRepository,
     auditService,
+    reverseGeocoder,
+    geocoding,
   });
   return { service, fakes, auditService };
 }
@@ -55,7 +59,15 @@ function seedUsers(fakes) {
   fakes.userRepository.seed({ id: "u_other", username: "other", email: "other@corp.io", name: "Other Person", status: "ACTIVE" });
 }
 
-async function seedAttendance(fakes, { userId = "u_emp", date = "2026-08-06" } = {}) {
+async function seedAttendance(
+  fakes,
+  {
+    userId = "u_emp",
+    date = "2026-08-06",
+    clockInLocation = null,
+    clockOutLocation = null,
+  } = {}
+) {
   const rec = await fakes.attendanceRepository.create({
     userId,
     date,
@@ -64,7 +76,9 @@ async function seedAttendance(fakes, { userId = "u_emp", date = "2026-08-06" } =
     exceptionTypes: [],
     status: "NORMAL",
   });
+  rec.clockInLocation = clockInLocation;
   rec.clockOutAt = new Date(`${date}T17:00:00Z`);
+  rec.clockOutLocation = clockOutLocation;
   await fakes.attendanceRepository.save(rec);
   return rec;
 }
@@ -118,6 +132,14 @@ test("listTypes returns the five report types with column metadata", () => {
   );
 });
 
+test("reportLocation rejects schema-default null coordinates", () => {
+  assert.equal(reportLocation({ latitude: null, longitude: null }), null);
+  assert.deepEqual(reportLocation({ latitude: -6.2, longitude: 106.8 }), {
+    latitude: -6.2,
+    longitude: 106.8,
+  });
+});
+
 test("preview projects rows and records REPORT.VIEWED activity", async () => {
   const { service, fakes } = makeService();
   seedUsers(fakes);
@@ -127,6 +149,8 @@ test("preview projects rows and records REPORT.VIEWED activity", async () => {
   assert.equal(result.total, 1);
   assert.equal(result.items[0].employee, "Jane Doe");
   assert.ok(result.items[0].clockOutAt);
+  assert.equal(result.items[0].clockInLocation, null);
+  assert.equal(result.items[0].clockOutLocation, null);
 
   assert.ok(
     fakes.activityRepository.entries.some((e) => e.action === "REPORT.VIEWED")
@@ -136,6 +160,102 @@ test("preview projects rows and records REPORT.VIEWED activity", async () => {
     false,
     "preview is activity-only"
   );
+});
+
+test("attendance report falls back to formatted coordinates when geocoding is unavailable", async () => {
+  const { service, fakes } = makeService();
+  seedUsers(fakes);
+  await seedAttendance(fakes, {
+    clockInLocation: { latitude: -6.208763, longitude: 106.845599 },
+    clockOutLocation: { latitude: -6.209, longitude: 106.846 },
+  });
+
+  const result = await service.preview("ATTENDANCE", { page: 1, pageSize: 20 }, ACTOR);
+  assert.equal(result.items[0].clockInLocation, "-6.208763, 106.845599");
+  assert.equal(result.items[0].clockOutLocation, "-6.209000, 106.846000");
+});
+
+test("attendance report uses cached reverse-geocoded addresses", async () => {
+  const calls = [];
+  const reverseGeocoder = {
+    async resolveMany(points, options) {
+      calls.push({ points, options });
+      return new Map([
+        [coordinateKey(-6.208763, 106.845599), "Jalan Sudirman 1, Jakarta, Indonesia"],
+      ]);
+    },
+  };
+  const { service, fakes } = makeService(true, {
+    reverseGeocoder,
+    geocoding: { previewDeadlineMs: 4000 },
+  });
+  seedUsers(fakes);
+  await seedAttendance(fakes, {
+    clockInLocation: { latitude: -6.208763, longitude: 106.845599 },
+  });
+
+  const result = await service.preview("ATTENDANCE", { page: 1, pageSize: 20 }, ACTOR);
+  assert.equal(result.items[0].clockInLocation, "Jalan Sudirman 1, Jakarta, Indonesia");
+  assert.equal(result.items[0].clockOutLocation, null);
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].points.length, 1);
+  assert.equal(calls[0].options.deadlineMs, 4000);
+});
+
+test("attendance Excel export contains resolved location values and headers", async () => {
+  const reverseGeocoder = {
+    async resolveMany() {
+      return new Map([
+        [coordinateKey(-6.208763, 106.845599), "Jalan Sudirman 1, Jakarta, Indonesia"],
+      ]);
+    },
+  };
+  const { service, fakes } = makeService(true, {
+    reverseGeocoder,
+    geocoding: { exportDeadlineMs: 4000 },
+  });
+  seedUsers(fakes);
+  await seedAttendance(fakes, {
+    clockInLocation: { latitude: -6.208763, longitude: 106.845599 },
+  });
+
+  const result = await service.exportReport("ATTENDANCE", {}, "excel", ACTOR);
+  const ExcelJS = require("exceljs");
+  const workbook = new ExcelJS.Workbook();
+  await workbook.xlsx.load(result.content);
+  const sheet = workbook.getWorksheet("Absensi");
+
+  assert.equal(sheet.getCell("D2").value, "Lokasi absen masuk");
+  assert.equal(sheet.getCell("F2").value, "Lokasi absen keluar");
+  assert.equal(sheet.getCell("D3").value, "Jalan Sudirman 1, Jakarta, Indonesia");
+  assert.equal(sheet.getCell("F3").value, "");
+});
+
+test("attendance preview geocodes only the current page", async () => {
+  const calls = [];
+  const reverseGeocoder = {
+    async resolveMany(points) {
+      calls.push(points);
+      return new Map();
+    },
+  };
+  const { service, fakes } = makeService(true, { reverseGeocoder });
+  seedUsers(fakes);
+  await seedAttendance(fakes, {
+    date: "2026-08-06",
+    clockInLocation: { latitude: -6.2, longitude: 106.8 },
+  });
+  await seedAttendance(fakes, {
+    date: "2026-08-07",
+    clockInLocation: { latitude: -6.3, longitude: 106.9 },
+  });
+
+  const result = await service.preview("ATTENDANCE", { page: 1, pageSize: 1 }, ACTOR);
+  assert.equal(result.total, 2);
+  assert.equal(result.items.length, 1);
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].length, 1);
+  assert.equal(result.items[0].clockInLocation, "-6.300000, 106.900000");
 });
 
 test("preview applies request filters (status + leave type)", async () => {

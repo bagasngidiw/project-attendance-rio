@@ -52,8 +52,12 @@ class OrgRepository {
     );
   }
 
-  async listDepartments() {
-    return DepartmentModel.find().sort({ name: 1 }).lean();
+  async listDepartments({ search } = {}) {
+    const filter = {};
+    if (search && search.trim()) {
+      filter.$text = { $search: search.trim() };
+    }
+    return DepartmentModel.find(filter).sort({ name: 1 }).lean();
   }
 
   async listActiveDepartments() {

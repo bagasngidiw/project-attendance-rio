@@ -8,6 +8,11 @@
 
 const ExcelJS = require("exceljs");
 
+const COLUMN_WIDTHS = Object.freeze({
+  clockInLocation: 42,
+  clockOutLocation: 42,
+});
+
 /**
  * Renders projected rows as an .xlsx workbook buffer.
  *
@@ -22,7 +27,7 @@ async function renderExcel({ type, rows, columnLabels, title, generatedAt }) {
   sheet.columns = type.columns.map((column) => ({
     header: columnLabels[column] ?? column,
     key: column,
-    width: 18,
+    width: COLUMN_WIDTHS[column] ?? 18,
   }));
 
   // A title row on top keeps the workbook readable in Excel.

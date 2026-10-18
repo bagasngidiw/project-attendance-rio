@@ -399,8 +399,10 @@ class InMemoryUserRepository {
     return user;
   }
 
-  async list({ search, status, departmentId, userIds, contractTypeId, placementId, page = 1, pageSize = 20 } = {}) {
-    if (userIds && userIds.length === 0) return { items: [], total: 0 };
+  async list({ search, status, departmentId, departmentIds, userIds, contractTypeId, placementId, page = 1, pageSize = 20 } = {}) {
+    if ((userIds && userIds.length === 0) || (departmentIds && departmentIds.length === 0)) {
+      return { items: [], total: 0 };
+    }
     let items = [...this.users.values()];
     if (search && search.trim()) {
       const q = search.trim().toLowerCase();
@@ -409,7 +411,10 @@ class InMemoryUserRepository {
       );
     }
     if (status) items = items.filter((u) => u.status === status);
-    if (departmentId) {
+    if (departmentIds) {
+      const departmentSet = new Set(departmentIds.map(String));
+      items = items.filter((u) => departmentSet.has(String(u.departmentId)));
+    } else if (departmentId) {
       items = items.filter((u) => String(u.departmentId) === String(departmentId));
     }
     // NEW UPDATE TAD SIMBIKA: contract/placement master filters (FR-002).
@@ -1290,8 +1295,15 @@ class InMemoryOrgRepository {
     return doc;
   }
 
-  async listDepartments() {
-    return [...this.departments.values()].sort((a, b) => a.name.localeCompare(b.name));
+  async listDepartments({ search } = {}) {
+    let items = [...this.departments.values()];
+    if (search && search.trim()) {
+      const query = search.trim().toLowerCase();
+      items = items.filter((department) =>
+        `${department.name} ${department.code}`.toLowerCase().includes(query)
+      );
+    }
+    return items.sort((a, b) => a.name.localeCompare(b.name));
   }
 
   async listActiveDepartments() {

@@ -22,6 +22,9 @@ const departmentSchema = new mongoose.Schema(
   }
 );
 
+// Text index for server-side department-name search in attendance filters.
+departmentSchema.index({ name: "text", code: "text" });
+
 const DepartmentModel = mongoose.model("Department", departmentSchema);
 
 module.exports = { DepartmentModel, ORG_STATUSES };

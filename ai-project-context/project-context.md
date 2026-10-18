@@ -81,9 +81,9 @@ Key architectural facts:
 | Concern | Technology | Evidence |
 |---|---|---|
 | Storage | Local disk (`LocalDiskStorage`) for branding assets and attendance media | `backend/src/infrastructure/storage/local-disk.storage.js`, `backend/server.js:204-206,496-499` |
-| Reports export | Custom CSV and PDF exporters (PDF is minimal) | `backend/src/infrastructure/exporters/csv.exporter.js`, `pdf.exporter.js` |
+| Reports export | Server-side ExcelJS workbook export (legacy CSV/PDF modules remain) | `backend/src/infrastructure/exporters/excel.exporter.js` |
 | Event bus | In-process synchronous in-memory bus (no external broker) | `backend/src/infrastructure/event-bus.js` |
-| External services | None found (no email/SMS/queue/cloud providers wired) | repo-wide inspection |
+| External services | Photon-compatible reverse geocoding is used optionally by attendance reports; no email/SMS/queue providers are wired | `backend/src/infrastructure/geocoding/reverse-geocoder.js` |
 | Deployment | None found (no Dockerfile / docker-compose / CI config in the repo root) | repo-wide inspection |
 
 ### Development Tools
@@ -222,6 +222,7 @@ flowchart TD
   - `attendance.model.js` — unique `{userId,date}`, clock in/out UTC, locations, `verification.camera.mediaRef`, `deviceInfo`, `scheduleSnapshot`, `punctuality`, `source` (SELF/CORRECTION), `version`.
   - `approval-configuration.model.js` — one doc per requestType: `roles[]` (`roleId`, `level`, `canApprove`, `canBeTarget`), `selfApproval`, `version`.
   - `audit-event.model.js` — append-only, tamper-evident: `action`, `actor{userId,roleKeys,scope}`, `subject{type,id,summary}`, `outcome`, `metadata`, `correlationId`, `ip`, `userAgent`, `prevHash`, `hash`, `recordedAt`.
+  - `location-geocode.model.js` — cached successful reverse-geocoded address per four-decimal rounded attendance coordinate key; attendance documents remain coordinate-only.
   - Others: `activity-log`, `request-event`, `outbox`, `session`, `refresh-token`, `role-permission`, `user-role`, `permission`, `notification`, `platform-setting`, `leave-type`, `sickness-type`, `leave-balance`, `department`, `position`, `attendance-correction`, `overtime-correction`, `exception-review`, `delegation`, `escalation`, `routing-rule`, `cutoff-rule`, `holiday`, `filter-preset`, `reporting-history`, `retention-job`, `recovery-token`, `mfa`, `role-template`.
 - **Relationships**: `user_roles` (unique `{userId,roleId}`) and `role_permissions` (unique `{roleId,permissionKey}`) are the authoritative joins; `user.roleIds` is a denormalized mirror backfilled by seed and kept in sync by `RbacService`/`RoleAdminService`/`UserAdminService`.
 
@@ -269,7 +270,7 @@ POST   /api/v1/attendance/verify-media           # multer upload
 POST   /api/v1/attendance/:id/correct            # attendance:correct
 GET    /api/v1/reports/types
 GET    /api/v1/reports/:type
-GET    /api/v1/reports/:type/export?format=csv|pdf   # reporting:export_excel | export_pdf
+GET    /api/v1/reports/:type/export?format=excel    # reporting:export_excel
 GET    /api/v1/audit/events                     # audit:view (SUPER_ADMIN all; others own only)
 GET    /api/v1/notifications
 GET    /api/v1/notifications/preferences
@@ -434,6 +435,9 @@ Two coexisting conventions:
 - `attendance.service.js`: clockIn (verification policy camera/location/accuracy via config, schedule-based punctuality, scheduleSnapshot), clockOut, listOwn, listOverview (HR), correct (append-only, old-value CAS, recompute exceptions, audited `ATTENDANCE.CORRECTED`).
 - Media: selfie upload via multer (2MB memory) to local disk `attendance-media/`; secure fetch with RBAC + CSP headers.
 - Frontend: `pages/Attendance` branches HR (`AttendanceOverview.tsx`) vs employee (`AttendanceVerificationPanel.tsx` + camera/location state machine `useAttendanceVerification.ts`).
+- Attendance records store clock-in/clock-out coordinates but not reverse-geocoded
+  addresses. The report layer resolves those coordinates lazily through the
+  cached Photon geocoder; see `ai-project-context/ABSENSI-LOCATION.md`.
 
 ### 16.6 User Management + Org
 
@@ -443,10 +447,10 @@ Two coexisting conventions:
 
 ### 16.7 Reports
 
-- `domain/report.js`: 4 report types (ATTENDANCE/LEAVE/OVERTIME/TRIP) with column sets + filterable-by; LEAVE/OVERTIME/TRIP include approval columns (`approvalTarget`, `assignedApprover`, `approvedBy`, `rejectedBy`, `rejectionReason`).
+- `domain/report.js`: 5 report types (ATTENDANCE/LEAVE/OVERTIME/TRIP/SAKIT) with column sets + filterable-by; LEAVE/OVERTIME/TRIP/SAKIT include approval columns (`approvalTarget`, `assignedApprover`, `approvedBy`, `rejectedBy`, `rejectionReason`). ATTENDANCE includes clock-in and clock-out location columns.
 - `infrastructure/report-providers.js`: `ReportProviderRegistry` + `RequestReportProvider` base resolving approver names from snapshots.
-- `report.service.js`: listTypes, preview (audited `REPORT.VIEWED`), exportReport (per-format permission `reporting:export_excel`/`export_pdf`, audited `REPORT.EXPORTED`), exportAllModules (combined CSV), team scope (FR-038).
-- Exporters: `csv.exporter.js`, `pdf.exporter.js`. Frontend: `features/reports/ReportCenterPage.tsx` + ReportFilterBar/ReportTable/ExportButton.
+- `report.service.js`: listTypes, preview (audited `REPORT.VIEWED`), Excel export (permission `reporting:export_excel`, audited `REPORT.EXPORTED`), exportAllModules, team scope (FR-038), and attendance location enrichment with coordinate fallback.
+- Exporters: `excel.exporter.js` (primary report export), plus legacy `csv.exporter.js`/`pdf.exporter.js`. Frontend: `features/reports/ReportCenterPage.tsx` + ReportFilterBar/ReportTable/ExportButton.
 
 ### 16.8 Dashboard
 
@@ -507,6 +511,7 @@ SEED_SUPER_ADMIN_USERNAME, SEED_SUPER_ADMIN_EMAIL, SEED_SUPER_ADMIN_PASSWORD, SE
 ```
 
 - Additional env vars read by `config.js` (not in `.env`): `ATTENDANCE_REQUIRE_CAMERA`, `ATTENDANCE_REQUIRE_LOCATION`, `ATTENDANCE_MAX_ACCURACY_METERS`, `PASSWORD_MIN_LENGTH`, `PASSWORD_REQUIRE_UPPERCASE/LOWERCASE/DIGIT/SPECIAL`, `PASSWORD_MAX_LENGTH`, `PASSWORD_EXPIRY_DAYS`, `PASSWORD_HISTORY_LENGTH`, `ENFORCE_FIRST_SIGN_IN_GATE`, `APPROVAL_REJECTION_REASON_REQUIRED`, `AUDIT_CHAIN_SALT`, `BRANDING_ASSETS_DIR`, `ATTENDANCE_MEDIA_DIR`.
+- Attendance report geocoding env vars: `GEOCODING_ENABLED`, `GEOCODING_PROVIDER`, `GEOCODING_PROVIDER_URL`, `GEOCODING_LANGUAGE`, `GEOCODING_TIMEOUT_MS`, `GEOCODING_MIN_INTERVAL_MS`, `GEOCODING_PREVIEW_DEADLINE_MS`, and `GEOCODING_EXPORT_DEADLINE_MS`. Cache keys use four-decimal coordinate buckets; report display fallbacks remain six-decimal coordinates.
 - `JWT_SECRET` is **required in production** (throws otherwise); dev-only fallback exists. `AUDIT_CHAIN_SALT` must remain stable across restarts or hash-chain verification breaks.
 - **Frontend has no runtime env vars** — API base is `/api/v1` via dev proxy; branding is runtime-configurable through platform settings (no VITE_* vars needed).
 
@@ -670,7 +675,8 @@ Note: there is no general migration framework — schema changes are applied to 
 - **Two leave accounting systems in parallel**: the modern `leave-balance` engine and the legacy `user.leaveQuotas` (kept in sync by `leave-quota.service.js`) — maintenance burden; migrations may be needed to retire one.
 - **`contracts/permissions.ts` is a manual mirror** of the backend registry — drift risk; no automated sync check.
 - **No Docker/CI/CD or deployment config** in the repo — deployment readiness unproven.
-- **PDF exporter is minimal** relative to CSV.
+- **Legacy CSV/PDF exporters remain** but the active report export path is the
+  ExcelJS workbook exporter.
 - **Many scratch `.txt` files** litter `backend/` and `frontend/` roots (test outputs, design notes) — not code, but clutter.
 - **Access token in memory only** — good for XSS, but full-page reloads depend on refresh-token bootstrap (already handled); note that browser restart loses refresh token and logs the user out.
 

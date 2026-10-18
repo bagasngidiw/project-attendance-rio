@@ -47,13 +47,32 @@ class AttendanceReportProvider {
           employee: user?.name ?? item.userId?.toString?.() ?? item.userId,
           date: item.date,
           clockInAt: item.clockInAt ? new Date(item.clockInAt).toISOString() : null,
+          clockInLocation: reportLocation(item.clockInLocation),
           clockOutAt: item.clockOutAt ? new Date(item.clockOutAt).toISOString() : null,
+          clockOutLocation: reportLocation(item.clockOutLocation),
           status: item.status,
           exceptionTypes: (item.exceptionTypes ?? []).join(", "),
         };
       })
     );
   }
+}
+
+/**
+ * Keeps only the coordinate pair needed by the report geocoder. Accuracy and
+ * acquisition metadata remain available from attendance detail APIs, while
+ * the report layer avoids exposing the complete verification object.
+ */
+function reportLocation(location) {
+  const rawLatitude = location?.latitude;
+  const rawLongitude = location?.longitude;
+  if (rawLatitude == null || rawLongitude == null || rawLatitude === "" || rawLongitude === "") return null;
+
+  const latitude = Number(rawLatitude);
+  const longitude = Number(rawLongitude);
+  if (!Number.isFinite(latitude) || !Number.isFinite(longitude)) return null;
+  if (latitude < -90 || latitude > 90 || longitude < -180 || longitude > 180) return null;
+  return { latitude, longitude };
 }
 
 /** Shared base for the request-based report providers. */
@@ -296,4 +315,5 @@ module.exports = {
   OvertimeReportProvider,
   TripReportProvider,
   SakitReportProvider,
+  reportLocation,
 };

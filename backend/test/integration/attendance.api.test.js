@@ -17,6 +17,8 @@ const { buildApp } = require("../../server");
 const { createConfig } = require("../../src/infrastructure/config");
 const { BcryptPasswordHasher } = require("../../src/infrastructure/password-hasher");
 const { seedDatabase } = require("../../src/infrastructure/seed/seed");
+const { UserModel } = require("../../src/infrastructure/models/user.model");
+const { DepartmentModel } = require("../../src/infrastructure/models/department.model");
 
 const TEST_URI =
   process.env.MONGO_URI_ATTENDANCE_TEST || "mongodb://127.0.0.1:27017/attendance_attendance_test";
@@ -41,6 +43,9 @@ beforeEach(async () => {
   await mongoose.connection.dropDatabase();
   const { app: built, repositories } = buildApp(config);
   app = built;
+  // dropDatabase removes indexes; restore the text indexes used by the
+  // employee and department name-search paths before seeding each test.
+  await Promise.all([UserModel.createIndexes(), DepartmentModel.createIndexes()]);
   await seedDatabase({
     roleRepository: repositories.roleRepository,
     permissionRepository: repositories.permissionRepository,
@@ -179,6 +184,18 @@ test("F6: HR overview filters records and respects scope", async () => {
   const bob = await signIn("employee.bob", "Employee2026!");
   const hr = await signIn("hradmin", "HrAdmin2026!");
 
+  const department = await request(app)
+    .post("/api/v1/org/departments")
+    .set("Authorization", `Bearer ${hr.accessToken}`)
+    .send({ name: "Attendance Engineering", code: "ATT-ENG" });
+  assert.equal(department.status, 201, JSON.stringify(department.body));
+
+  const assigned = await request(app)
+    .put(`/api/v1/users/${bob.user.id}`)
+    .set("Authorization", `Bearer ${hr.accessToken}`)
+    .send({ departmentId: department.body.data.id });
+  assert.equal(assigned.status, 200, JSON.stringify(assigned.body));
+
   const clockIn = await request(app)
     .post("/api/v1/attendance/clock-in")
     .send(VERIFY_BODY)
@@ -203,6 +220,32 @@ test("F6: HR overview filters records and respects scope", async () => {
     .query({ employeeId: employee.user.id });
   assert.equal(byEmployee.body.data.total, 1);
   assert.equal(byEmployee.body.data.items[0].id, recordId);
+
+  // Name search resolves the user server-side; ObjectIds are not required.
+  const byEmployeeName = await request(app)
+    .get("/api/v1/attendance")
+    .set("Authorization", `Bearer ${hr.accessToken}`)
+    .query({ employeeSearch: "bob" });
+  assert.equal(byEmployeeName.status, 200);
+  assert.equal(byEmployeeName.body.data.total, 1);
+  assert.equal(byEmployeeName.body.data.items[0].user.name, "Bob Demo");
+
+  // Department name search uses the same server-side text-search flow.
+  const byDepartmentName = await request(app)
+    .get("/api/v1/attendance")
+    .set("Authorization", `Bearer ${hr.accessToken}`)
+    .query({ departmentSearch: "Engineering" });
+  assert.equal(byDepartmentName.status, 200);
+  assert.equal(byDepartmentName.body.data.total, 1);
+  assert.equal(byDepartmentName.body.data.items[0].user.name, "Bob Demo");
+
+  // A miss must remain an empty result, not fall through to an unfiltered query.
+  const noNameMatch = await request(app)
+    .get("/api/v1/attendance")
+    .set("Authorization", `Bearer ${hr.accessToken}`)
+    .query({ employeeSearch: "zzzznomatch" });
+  assert.equal(noNameMatch.status, 200);
+  assert.equal(noNameMatch.body.data.total, 0);
 
   // A quick clock-out produces an ANOMALY; HR can filter on it.
   await request(app)

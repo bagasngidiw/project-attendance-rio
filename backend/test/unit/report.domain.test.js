@@ -28,7 +28,9 @@ test("the registry exposes the five report types with ordered columns", () => {
     "employee",
     "date",
     "clockInAt",
+    "clockInLocation",
     "clockOutAt",
+    "clockOutLocation",
     "status",
     "exceptionTypes",
   ]);

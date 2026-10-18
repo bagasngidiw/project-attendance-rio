@@ -2,7 +2,7 @@
  * ReportService — the reporting surface (FR-018 / FR-019).
  *
  * Lists report types, previews filtered results on-screen, and exports the
- * same filtered data as Excel (CSV) or PDF. Export is an action permission
+ * same filtered data as Excel. Export is an action permission
  * checked per request; every export records REPORT.EXPORTED (audit +
  * activity) and previews record REPORT.VIEWED (activity). Data scope is
  * resolved by the caller (company-wide for HR/SUPER_ADMIN).
@@ -22,6 +22,10 @@ const {
   ReportUnavailableError,
 } = require("../domain/errors");
 const { renderExcel } = require("../infrastructure/exporters/excel.exporter");
+const {
+  formatCoordinates,
+  normalizeLocation,
+} = require("../infrastructure/geocoding/reverse-geocoder");
 
 class ReportService {
   /**
@@ -30,10 +34,18 @@ class ReportService {
    * @param {import('../infrastructure/repositories/user.repository').UserRepository} deps.userRepository
    * @param {import('./audit.service').AuditService} deps.auditService
    */
-  constructor({ registry, userRepository, auditService }) {
+  constructor({
+    registry,
+    userRepository,
+    auditService,
+    reverseGeocoder = null,
+    geocoding = {},
+  }) {
     this.registry = registry;
     this.userRepository = userRepository;
     this.auditService = auditService;
+    this.reverseGeocoder = reverseGeocoder;
+    this.geocoding = geocoding;
   }
 
   /** Available report types + column/filter metadata (FR-018 §4.1). */
@@ -107,7 +119,12 @@ class ReportService {
     const page = filters.page ?? 1;
     const pageSize = filters.pageSize ?? 20;
     const total = projected.length;
-    const items = projected.slice((page - 1) * pageSize, page * pageSize);
+    const pageItems = projected.slice((page - 1) * pageSize, page * pageSize);
+    const items = await this.enrichLocations(
+      typeKey,
+      pageItems,
+      this.geocoding.previewDeadlineMs
+    );
 
     await this.auditService.record({
       action: "REPORT.VIEWED",
@@ -154,11 +171,16 @@ class ReportService {
     const userIds = await this.resolveUserIds(filters, scope, actor.actorId);
     const rows = await provider.query({ userIds, filters });
     const projected = rows.map((row) => projectRow(typeKey, row));
+    const enriched = await this.enrichLocations(
+      typeKey,
+      projected,
+      this.geocoding.exportDeadlineMs
+    );
 
     const generatedAt = new Date().toISOString();
     const content = await renderExcel({
       type,
-      rows: projected,
+      rows: enriched,
       columnLabels: REPORT_COLUMN_LABELS,
       title: `Laporan ${type.label}`,
       generatedAt,
@@ -177,14 +199,14 @@ class ReportService {
         format,
         scope: scope ?? "company",
         filters: cleanFilters(filters),
-        rowCount: projected.length,
+        rowCount: enriched.length,
       },
       correlationId: actor.correlationId,
       ip: actor.ip,
       userAgent: actor.userAgent,
     });
 
-    return { content, contentType, filename, rowCount: projected.length };
+    return { content, contentType, filename, rowCount: enriched.length };
   }
 
   /**
@@ -217,7 +239,12 @@ class ReportService {
         type: type.label,
         ...projectRow(key, row),
       }));
-      sections.push({ type, rows: projected });
+      const enriched = await this.enrichLocations(
+        key,
+        projected,
+        this.geocoding.exportDeadlineMs
+      );
+      sections.push({ type, rows: enriched });
     }
 
     const totalRows = sections.reduce((n, s) => n + s.rows.length, 0);
@@ -260,6 +287,52 @@ class ReportService {
       filename,
       rowCount: totalRows,
     };
+  }
+
+  /**
+   * Resolves attendance coordinate objects to readable report values. The
+   * provider deliberately passes only latitude/longitude; this method keeps
+   * external geocoding out of the data provider and guarantees a coordinate
+   * fallback whenever the provider or cache is unavailable.
+   */
+  async enrichLocations(typeKey, rows, deadlineMs) {
+    if (typeKey !== "ATTENDANCE" || !Array.isArray(rows) || rows.length === 0) {
+      return rows;
+    }
+
+    const fields = ["clockInLocation", "clockOutLocation"];
+    const points = [];
+    for (const row of rows) {
+      for (const field of fields) {
+        const point = normalizeLocation(row[field]);
+        if (point) points.push(point);
+      }
+    }
+
+    let addresses = new Map();
+    if (this.reverseGeocoder?.resolveMany && points.length > 0) {
+      try {
+        addresses = await this.reverseGeocoder.resolveMany(points, {
+          deadlineMs,
+        });
+      } catch {
+        // A report must remain usable even when an injected geocoder fails.
+        addresses = new Map();
+      }
+    }
+
+    return rows.map((row) => {
+      const enriched = { ...row };
+      for (const field of fields) {
+        const point = normalizeLocation(row[field]);
+        if (!point) {
+          enriched[field] = row[field] == null ? null : row[field];
+          continue;
+        }
+        enriched[field] = addresses.get(point.key) || formatCoordinates(point);
+      }
+      return enriched;
+    });
   }
 }
 

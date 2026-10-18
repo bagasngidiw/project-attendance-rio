@@ -28,6 +28,8 @@ const attendanceQuerySchema = z.object({
     .optional(),
   departmentId: z.string().optional(),
   employeeId: z.string().optional(),
+  departmentSearch: z.string().trim().min(1).max(128).optional(),
+  employeeSearch: z.string().trim().min(1).max(128).optional(),
   page: z.coerce.number().int().min(1).optional().default(1),
   pageSize: z.coerce.number().int().min(1).max(100).optional().default(20),
 });

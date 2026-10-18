@@ -31,6 +31,7 @@ const { RequestRepository } = require("./src/infrastructure/repositories/request
 const { RequestEventRepository } = require("./src/infrastructure/repositories/request-event.repository");
 const { RoutingRuleRepository } = require("./src/infrastructure/repositories/routing-rule.repository");
 const { AttendanceRepository } = require("./src/infrastructure/repositories/attendance.repository");
+const { LocationGeocodeRepository } = require("./src/infrastructure/repositories/location-geocode.repository");
 const { AttachmentRepository } = require("./src/infrastructure/repositories/attachment.repository");
 const { SalarySlipRepository } = require("./src/infrastructure/repositories/salary-slip.repository");
 const { AttendanceCorrectionModel } = require("./src/infrastructure/models/attendance-correction.model");
@@ -56,6 +57,7 @@ const { AttendanceLeaveSyncService } = require("./src/application/attendance-lea
 const { AttachmentService } = require("./src/application/attachment.service");
 const { SalarySlipService } = require("./src/application/salary-slip.service");
 const { LocalDiskStorage } = require("./src/infrastructure/storage/local-disk.storage");
+const { createReverseGeocoder } = require("./src/infrastructure/geocoding/reverse-geocoder");
 
 const { AuditService } = require("./src/application/audit.service");
 const { SessionService } = require("./src/application/session.service");
@@ -209,6 +211,7 @@ function buildApp(config) {
   const requestEventRepository = new RequestEventRepository();
   const routingRuleRepository = new RoutingRuleRepository();
   const attendanceRepository = new AttendanceRepository();
+  const locationGeocodeRepository = new LocationGeocodeRepository();
   const attachmentRepository = new AttachmentRepository();
   const reportProviderRegistry = new ReportProviderRegistry();
   const orgRepository = new OrgRepository();
@@ -411,6 +414,7 @@ function buildApp(config) {
   const attendanceService = new AttendanceService({
     attendanceRepository,
     userRepository,
+    orgRepository,
     requestRepository,
     correctionModel: AttendanceCorrectionModel,
     pendingSummaryService,
@@ -480,6 +484,11 @@ function buildApp(config) {
     registry: reportProviderRegistry,
     userRepository,
     auditService,
+    reverseGeocoder: createReverseGeocoder({
+      config: config.geocoding,
+      cacheRepository: locationGeocodeRepository,
+    }),
+    geocoding: config.geocoding,
   });
 
   // Register the built-in report data providers (FR-027 extensibility).
@@ -801,6 +810,7 @@ const salaryAssetsDir = config.salaryAssetsDir || path.join(__dirname, "salary-a
       contractTypeRepository,
       placementRepository,
       approvalConfigurationRepository,
+      locationGeocodeRepository,
       salarySlipRepository,
     },
   };
@@ -834,17 +844,12 @@ const listenPort = process.env.PORT || config.port || 5000;
   });
 }
 
-// Only auto-start when run directly (not when imported by tests).
-// if (require.main === module) {
-//   start().catch((err) => {
-//     console.error("[server] Failed to start:", err);
-//     process.exit(1);
-//   });
-// }
-
-start().catch((err) => {
-  console.error("[server] Failed to start:", err);
-  process.exit(1);
-});
+// Only auto-start when run directly (not when imported by tests or scripts).
+if (require.main === module) {
+  start().catch((err) => {
+    console.error("[server] Failed to start:", err);
+    process.exit(1);
+  });
+}
 
 module.exports = { buildApp, start };

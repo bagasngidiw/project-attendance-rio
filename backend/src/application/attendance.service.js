@@ -30,6 +30,7 @@ class AttendanceService {
    * @param {object} deps
    * @param {import('../infrastructure/repositories/attendance.repository').AttendanceRepository} deps.attendanceRepository
    * @param {import('../infrastructure/repositories/user.repository').UserRepository} deps.userRepository
+   * @param {import('../infrastructure/repositories/org.repository').OrgRepository} [deps.orgRepository]
    * @param {import('../infrastructure/repositories/request.repository').RequestRepository} [deps.requestRepository] FR-001 approved-leave coverage
    * @param {import('../infrastructure/repositories/attendance-correction.model').AttendanceCorrectionModel} deps.correctionModel
    * @param {import('./pending-summary.service').PendingSummaryService} deps.pendingSummaryService
@@ -40,6 +41,7 @@ class AttendanceService {
   constructor({
     attendanceRepository,
     userRepository,
+    orgRepository = null,
     requestRepository = null,
     correctionModel,
     pendingSummaryService,
@@ -49,6 +51,7 @@ class AttendanceService {
   }) {
     this.attendanceRepository = attendanceRepository;
     this.userRepository = userRepository;
+    this.orgRepository = orgRepository;
     this.requestRepository = requestRepository;
     this.correctionModel = correctionModel;
     this.auditService = auditService;
@@ -269,17 +272,47 @@ class AttendanceService {
       throw new NotFoundError("Attendance overview not found.", "ATTENDANCE_NOT_FOUND");
     }
 
+    const emptyPage = () => ({
+      items: [],
+      total: 0,
+      page: filters.page ?? 1,
+      pageSize: filters.pageSize ?? 20,
+    });
+
     let userIds;
-    if (filters.departmentId) {
+    if (filters.employeeId) {
+      userIds = [filters.employeeId];
+    } else if (filters.employeeSearch || filters.departmentId || filters.departmentSearch) {
+      let departmentIds;
+
+      if (filters.departmentSearch) {
+        if (!this.orgRepository) {
+          throw new ValidationError("Department search is unavailable.", {
+            field: "departmentSearch",
+          });
+        }
+        const departments = await this.orgRepository.listDepartments({
+          search: filters.departmentSearch,
+        });
+        departmentIds = departments.map((department) => String(department._id ?? department.id));
+      }
+
+      if (filters.departmentId) {
+        departmentIds = departmentIds
+          ? departmentIds.filter((id) => String(id) === String(filters.departmentId))
+          : [filters.departmentId];
+      }
+
+      if (departmentIds && departmentIds.length === 0) return emptyPage();
+
       const { items } = await this.userRepository.list({
-        departmentId: filters.departmentId,
+        search: filters.employeeSearch,
+        departmentIds,
         page: 1,
         pageSize: 10000,
       });
+      if (items.length === 0) return emptyPage();
       userIds = items.map((u) => String(u._id ?? u.id));
-    }
-    if (filters.employeeId) {
-      userIds = [filters.employeeId];
     }
 
     const { items, total } = await this.attendanceRepository.queryOverview({

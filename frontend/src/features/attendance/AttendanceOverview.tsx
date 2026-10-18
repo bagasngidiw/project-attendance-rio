@@ -21,8 +21,8 @@ import { CorrectionDialog } from "./CorrectionDialog";
 const PAGE_SIZE = 10;
 
 export function AttendanceOverview() {
-  const [employeeId, setEmployeeId] = useState("");
-  const [departmentId, setDepartmentId] = useState("");
+  const [employeeSearch, setEmployeeSearch] = useState("");
+  const [departmentSearch, setDepartmentSearch] = useState("");
   const [from, setFrom] = useState("");
   const [to, setTo] = useState("");
   const [exception, setException] = useState("");
@@ -30,8 +30,8 @@ export function AttendanceOverview() {
   const [correcting, setCorrecting] = useState<AttendanceRecordDto | null>(null);
 
   const params = {
-    employeeId: employeeId || undefined,
-    departmentId: departmentId || undefined,
+    employeeSearch: employeeSearch || undefined,
+    departmentSearch: departmentSearch || undefined,
     from: from || undefined,
     to: to || undefined,
     exception: exception || undefined,
@@ -71,18 +71,18 @@ export function AttendanceOverview() {
       >
         <div className="w-full sm:w-56">
           <Input
-            label="ID karyawan"
-            placeholder="ID pengguna"
-            value={employeeId}
-            onChange={(e) => setEmployeeId(e.target.value)}
+            label="Nama karyawan"
+            placeholder="Cari nama karyawan"
+            value={employeeSearch}
+            onChange={(e) => setEmployeeSearch(e.target.value)}
           />
         </div>
         <div className="w-full sm:w-56">
           <Input
-            label="ID departemen"
-            placeholder="ID departemen"
-            value={departmentId}
-            onChange={(e) => setDepartmentId(e.target.value)}
+            label="Departemen"
+            placeholder="Cari nama departemen"
+            value={departmentSearch}
+            onChange={(e) => setDepartmentSearch(e.target.value)}
           />
         </div>
         <div className="w-full sm:w-44">

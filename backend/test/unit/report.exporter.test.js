@@ -103,3 +103,33 @@ test("renderExcel produces a real .xlsx workbook with headers and values (FR-005
   assert.equal(sheet.getCell("A3").value, "Jane Doe", "data row value");
   assert.equal(sheet.getCell("B3").value, "2026-08-06", "date value preserved");
 });
+
+test("renderExcel gives attendance location columns readable widths", async () => {
+  const buffer = await renderExcel({
+    type: {
+      columns: ["clockInLocation", "clockOutLocation"],
+      label: "Absensi",
+    },
+    rows: [
+      {
+        clockInLocation: "Jalan Sudirman 1, Jakarta, Indonesia",
+        clockOutLocation: "-6.208763, 106.845599",
+      },
+    ],
+    columnLabels: {
+      clockInLocation: "Lokasi absen masuk",
+      clockOutLocation: "Lokasi absen keluar",
+    },
+    title: "Laporan Absensi",
+    generatedAt: "2026-08-06T10:00:00.000Z",
+  });
+
+  const ExcelJS = require("exceljs");
+  const workbook = new ExcelJS.Workbook();
+  await workbook.xlsx.load(buffer);
+  const sheet = workbook.getWorksheet("Absensi");
+  assert.equal(sheet.getCell("A2").value, "Lokasi absen masuk");
+  assert.equal(sheet.getCell("A3").value, "Jalan Sudirman 1, Jakarta, Indonesia");
+  assert.equal(sheet.getColumn("A").width, 42);
+  assert.equal(sheet.getColumn("B").width, 42);
+});
