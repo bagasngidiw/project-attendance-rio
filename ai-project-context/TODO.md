@@ -984,6 +984,8 @@ Credential rotation requires cPanel and MongoDB Atlas access and must not be fab
 - `deploy.js` now uploads the version-controlled Passenger-compatible frontend `.htaccess` and protects the cPanel-managed backend `.htaccess`.
 - Remote frontend routing was restored and the stale public `/backend` directory was removed.
 - Remote API routing/security configuration was restored without logging or committing secret values.
+- `AUTO_GIT_DAILY.md` was completed safely with commit `842a7db` pushed to `origin/main` (the existing remote/history were preserved instead of re-adding the remote or resetting history).
+- `AUTO_DEPLOY_PROD.md` was executed: the frontend production build passed, backend/frontend synchronization completed, the committed frontend `.htaccess` was uploaded, and `backend/tmp/restart.txt` was refreshed.
 
 #### Files Changed
 
@@ -1012,4 +1014,5 @@ Credential rotation requires cPanel and MongoDB Atlas access and must not be fab
 - [x] Remote `/backend/.htaccess` contains Passenger routing and direct-source protection.
 - [x] Direct API source/package requests return 403 instead of exposing files.
 - [x] Frontend remains available at `https://simbika.com/`.
+- [x] Production frontend build and FTP deployment completed; remote `/public_html/.htaccess` SHA-256 remains `e5fb29699f41c6678cd07b3ae639953051408293bf639b5c9d5dd8e1d15ee9f4`.
 - [ ] API health endpoint verified after the host-level application spawn issue is fixed.
