@@ -12,7 +12,8 @@
  *      .env, uploads, logs, local runtime upload dirs, and the two local
  *      provisioning seed scripts that embed deployment credentials).
  *   3. Sync ./frontend/dist -> REMOTE_FRONTEND_PATH (production build).
- *   4. Upload a React SPA .htaccess into REMOTE_FRONTEND_PATH.
+ *   4. Upload the committed CloudLinux Passenger/React SPA .htaccess from
+ *      ./frontend/public into REMOTE_FRONTEND_PATH.
  *   5. Signal Phusion Passenger to reload the Express app by (re)touching
  *      REMOTE_BACKEND_PATH/tmp/restart.txt.
  *
@@ -71,6 +72,8 @@ const BACKEND_EXCLUDES = [
   "node_modules/**", "node_modules/**/*",
   "node_modules/**/.*", "node_modules/**/.*/**", "node_modules/**/.*/**/*",
   ".git/**", ".git/**/*",
+  // cPanel-managed API routing, CORS, and environment configuration.
+  ".htaccess",
   // Local MongoDB data — never upload database binaries to production.
   ".mongo-data/**", ".mongo-data/**/*",
   ".env", ".env.*",
@@ -87,28 +90,11 @@ const BACKEND_EXCLUDES = [
   "scripts/reset-and-seed-tad-simbika.js",
 ];
 
-const HTACCESS_CONTENT = `# React SPA — client-side routing (AUTO_DEPLOY_PROD.md)
-<IfModule mod_rewrite.c>
-    RewriteEngine On
-    RewriteBase /
-
-    # DO NOT rewrite requests starting with /backend
-    RewriteCond %{REQUEST_URI} ^/backend [NC]
-    RewriteRule ^ - [L]
-
-    # Same-origin API: /api/* -> Passenger backend mounted at /backend
-    RewriteRule ^api(/.*)?$ /backend/api$1 [L]
-
-    RewriteRule ^index\\.html$ - [L]
-    RewriteCond %{REQUEST_FILENAME} !-f
-    RewriteCond %{REQUEST_FILENAME} !-d
-    RewriteRule . /index.html [L]
-</IfModule>
-
-<IfModule mod_headers.c>
-    Header set X-Content-Type-Options "nosniff"
-</IfModule>
-`;
+// Keep the hosting-specific Passenger configuration in version control and
+// upload that exact file explicitly. ftp-deploy's glob does not reliably
+// include dotfiles, and generating a second .htaccess here previously
+// overwrote the CloudLinux Passenger directives.
+const FRONTEND_HTACCESS = path.join(__dirname, "frontend", "public", ".htaccess");
 
 function log(...args) {
   console.log("[deploy]", ...args);
@@ -257,11 +243,16 @@ async function cleanupBackendNodeModules() {
   log("syncing frontend build...");
   await syncDir(dist, config.frontRoot, [".git/**"], "frontend");
 
-  // 4) .htaccess for SPA routing.
+  // 4) Upload the committed Passenger + SPA .htaccess. This must not be
+  // replaced by a generated rewrite file: the Passenger directives are what
+  // connect the production request path to /home/simbika1/backend.
   log("uploading .htaccess...");
-  const htaccessLocal = tempFile("deploy-htaccess", HTACCESS_CONTENT);
+  if (!fs.existsSync(FRONTEND_HTACCESS)) {
+    logError(`ABORT: committed frontend .htaccess missing at ${FRONTEND_HTACCESS}`);
+    process.exit(1);
+  }
   await withFtpClient((client) =>
-    client.uploadFrom(htaccessLocal, path.posix.join(config.frontRoot, ".htaccess"))
+    client.uploadFrom(FRONTEND_HTACCESS, path.posix.join(config.frontRoot, ".htaccess"))
   );
   log(".htaccess uploaded");
 

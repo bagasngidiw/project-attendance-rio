@@ -936,3 +936,80 @@ service and its fair-use interval.
 - [x] Frontend lint passed.
 - [x] Frontend production build passed.
 - [x] Backend syntax checks and `git diff --check` passed.
+
+---
+
+## Production Deployment Remediation (2026-10-19)
+
+### DEPLOY-FR-001: Preserve the CloudLinux Passenger frontend routing configuration
+
+- [x] Replace the generated `deploy.js` `.htaccess` content with an explicit upload of the committed `frontend/public/.htaccess`.
+- [x] Exclude backend `.htaccess` from backend synchronization because cPanel manages its Passenger, CORS, and environment configuration.
+
+### DEPLOY-FR-002: Restore production routing and remove the stale public backend directory
+
+- [x] Restore `/public_html/.htaccess` and verify its SHA-256 matches the committed Passenger configuration.
+- [x] Remove the empty `/public_html/backend` directory that exposed a LiteSpeed directory listing.
+- [x] Add the Passenger block to the API app's `/backend/.htaccess` while preserving its existing cPanel-managed settings.
+- [x] Block direct public access to backend source, package, log, and runtime paths.
+
+### DEPLOY-FR-003: Start and verify the API application
+
+- [ ] Start/restart the cPanel Node.js application for `/home/simbika1/backend` (`api.simbika.com`).
+
+#### Blocked
+
+The cPanel selector metadata reports the API application as `started`, but no
+`lsnode`/Node worker or listening socket is created after cPanel Start,
+Passenger restart, or `cloudlinux-selector restart`. The application boots
+successfully when run manually (MongoDB connection, idempotent seed, and port
+5000 listener all succeed), so the remaining blocker is the host-level
+CloudLinux/LiteSpeed Passenger spawn layer. Hosting support must inspect or
+recreate the app supervisor/mapping. Until that is fixed,
+`https://api.simbika.com/health` remains unavailable with HTTP 503.
+
+### DEPLOY-FR-004: Rotate production credentials
+
+- [ ] Replace the placeholder production `JWT_SECRET` (`YourSecret`) through cPanel environment settings with a strong random value.
+- [ ] Rotate the MongoDB Atlas credential and update the cPanel environment value.
+
+#### Blocked
+
+Credential rotation requires cPanel and MongoDB Atlas access and must not be fabricated or performed with guessed values. Existing secret values are intentionally not recorded in this TODO.
+
+### Deployment Implementation Summary
+
+#### Completed
+
+- `deploy.js` now uploads the version-controlled Passenger-compatible frontend `.htaccess` and protects the cPanel-managed backend `.htaccess`.
+- Remote frontend routing was restored and the stale public `/backend` directory was removed.
+- Remote API routing/security configuration was restored without logging or committing secret values.
+
+#### Files Changed
+
+- `deploy.js`
+- `ai-project-context/TODO.md`
+
+#### Database Changes
+
+- None.
+
+#### API Changes
+
+- None to application routes; deployment routing and host configuration only.
+
+#### Remaining Work
+
+- Hosting operator must repair/recreate the CloudLinux/LiteSpeed Node.js app
+  supervisor so the started application actually spawns a worker.
+- Production JWT and MongoDB credentials must be rotated by authorized operators.
+
+#### Verification
+
+- [x] `node --check deploy.js` passed.
+- [x] `git diff --check` passed.
+- [x] Remote `/public_html/.htaccess` matches the committed file byte-for-byte.
+- [x] Remote `/backend/.htaccess` contains Passenger routing and direct-source protection.
+- [x] Direct API source/package requests return 403 instead of exposing files.
+- [x] Frontend remains available at `https://simbika.com/`.
+- [ ] API health endpoint verified after the host-level application spawn issue is fixed.
