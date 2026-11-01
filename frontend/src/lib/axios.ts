@@ -448,9 +448,7 @@ export const brandingApi = {
   uploadLogo: (file: File) => {
     const formData = new FormData();
     formData.append("file", file);
-    return api.post<BrandingLogoResponse>("/platform/settings/branding/logo", formData, {
-      headers: { "Content-Type": false },
-    });
+    return api.post<BrandingLogoResponse>("/platform/settings/branding/logo", formData);
   },
 
   /** Remove the persisted logo asset. */

@@ -3,7 +3,7 @@
  *
  * Reads credentials from the local root `.env` file (never prints them):
  *   FTP_HOST, FTP_USER, FTP_PASSWORD, FTP_PORT,
- *   REMOTE_BACKEND_PATH (default /backend), REMOTE_FRONTEND_PATH (default /public_html)
+ *   REMOTE_BACKEND_PATH (default /backend_app), REMOTE_FRONTEND_PATH (default /public_html)
  *
  * Flow:
  *   1. One-time purge of legacy directories/files inside REMOTE_FRONTEND_PATH
@@ -35,7 +35,7 @@ const config = {
   user: process.env.FTP_USER,
   password: process.env.FTP_PASSWORD,
   port: Number(process.env.FTP_PORT) || 21,
-  backendRoot: process.env.REMOTE_BACKEND_PATH || "/backend",
+  backendRoot: process.env.REMOTE_BACKEND_PATH || "/backend_app",
   frontRoot: process.env.REMOTE_FRONTEND_PATH || "/public_html",
 };
 
