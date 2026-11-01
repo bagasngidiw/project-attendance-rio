@@ -221,7 +221,14 @@ export const api: AxiosInstance = axios.create({
  * Callers MUST revoke the returned object URL when it is replaced or unmounted.
  */
 export async function fetchBlobObjectUrl(relativePath: string): Promise<string> {
-  const res = await api.get(relativePath, { responseType: "blob" });
+  // The stored logo/asset URL is a full server path (e.g.
+  // "/api/v1/platform/branding-assets/<key>"). The axios instance already
+  // carries an "/api/v1" baseURL, so passing the path verbatim would produce
+  // a doubled "/api/v1/api/v1/..." request (404). Strip the prefix here.
+  const path = relativePath.startsWith("/api/v1/")
+    ? relativePath.slice("/api/v1".length)
+    : relativePath;
+  const res = await api.get(path, { responseType: "blob" });
   return URL.createObjectURL(res.data as Blob);
 }
 
