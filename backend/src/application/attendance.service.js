@@ -248,9 +248,11 @@ class AttendanceService {
    * @param {string} actorId
    * @param {{ canViewAll: boolean }} scope
    */
-  async getByIdScoped(id, actorId, { canViewAll }) {
+  async getByIdScoped(id, actorId, { canViewAll, visibleUserIds = null }) {
     const record = canViewAll
-      ? await this.attendanceRepository.findById(id)
+      ? visibleUserIds
+        ? await this.attendanceRepository.findByIdInUsers(id, visibleUserIds)
+        : await this.attendanceRepository.findById(id)
       : await this.attendanceRepository.findByIdScoped(id, actorId);
     if (!record) {
       throw new NotFoundError("Attendance record not found.", "ATTENDANCE_NOT_FOUND");
@@ -267,7 +269,7 @@ class AttendanceService {
    * HR overview (FR-041): filters employee, department, date range, status,
    * and exception. Department resolves to the department's user ids.
    */
-  async listOverview({ actorId, canViewAll, filters = {} }) {
+  async listOverview({ actorId, canViewAll, visibleUserIds = null, filters = {} }) {
     if (!canViewAll) {
       throw new NotFoundError("Attendance overview not found.", "ATTENDANCE_NOT_FOUND");
     }
@@ -281,6 +283,7 @@ class AttendanceService {
 
     let userIds;
     if (filters.employeeId) {
+      if (visibleUserIds && !visibleUserIds.includes(String(filters.employeeId))) return emptyPage();
       userIds = [filters.employeeId];
     } else if (filters.employeeSearch || filters.departmentId || filters.departmentSearch) {
       let departmentIds;
@@ -312,7 +315,15 @@ class AttendanceService {
         pageSize: 10000,
       });
       if (items.length === 0) return emptyPage();
-      userIds = items.map((u) => String(u._id ?? u.id));
+       userIds = items.map((u) => String(u._id ?? u.id));
+    }
+
+    if (visibleUserIds) {
+      const allowed = new Set(visibleUserIds.map(String));
+      userIds = userIds
+        ? userIds.filter((id) => allowed.has(String(id)))
+        : [...allowed];
+      if (userIds.length === 0) return emptyPage();
     }
 
     const { items, total } = await this.attendanceRepository.queryOverview({

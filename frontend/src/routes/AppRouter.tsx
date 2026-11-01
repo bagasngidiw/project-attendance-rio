@@ -32,6 +32,7 @@ import { ApprovalHistoryPage } from "@/features/approvals/ApprovalHistoryPage";
 import { UnifiedApprovalPage } from "@/features/approvals/UnifiedApprovalPage";
 import { ApprovalConfigPage } from "@/features/approval-config/ApprovalConfigPage";
 import { MasterDataPage } from "@/features/admin/MasterDataPage";
+import Hierarchy from "@/pages/Hierarchy";
 
 import { ROUTES } from "@/constants/routes";
 import { PERMISSIONS } from "@contracts/permissions";
@@ -264,6 +265,17 @@ export default function AppRouter() {
               element={
                 <RequirePermission permission={PERMISSIONS.PLATFORM_SETTINGS}>
                   <MasterDataPage />
+                </RequirePermission>
+              }
+            />
+
+            <Route
+              path={ROUTES.ADMIN_HIERARCHY}
+              element={
+                <RequirePermission
+                  permission={[PERMISSIONS.HIERARCHY_VIEW, PERMISSIONS.HIERARCHY_MANAGE]}
+                >
+                  <Hierarchy />
                 </RequirePermission>
               }
             />

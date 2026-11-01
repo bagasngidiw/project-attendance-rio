@@ -28,9 +28,10 @@ class ApprovalTargetService {
    * @param {import('./approval-configuration.service').ApprovalConfigurationService} deps.approvalConfigurationService
    * @param {import('../infrastructure/repositories/user.repository').UserRepository} deps.userRepository
    */
-  constructor({ approvalConfigurationService, userRepository }) {
+  constructor({ approvalConfigurationService, userRepository, hierarchyService = null }) {
     this.approvalConfigurationService = approvalConfigurationService;
     this.userRepository = userRepository;
+    this.hierarchyService = hierarchyService;
   }
 
   /**
@@ -63,7 +64,28 @@ class ApprovalTargetService {
       this.approvalConfigurationService.getEligibleRoles(requestType),
       this.approvalConfigurationService.getEligibleUsers(requestType, roleId, { contractTypeId }),
     ]);
-    return { roles, users };
+    if (!this.hierarchyService || !requesterId) return { roles, users };
+
+    const hierarchy = await this.hierarchyService.getAncestorUsers(requesterId);
+    if (!hierarchy.chart) {
+      return hierarchy.requesterScoped ? { roles: [], users: [] } : { roles, users };
+    }
+    const ancestorById = new Map(
+      hierarchy.ancestors.map((ancestor) => [String(ancestor.userId), ancestor])
+    );
+    const scopedUsers = users
+      .filter((user) => ancestorById.has(String(user.userId)))
+      .map((user) => ({
+        ...user,
+        relation: "ANCESTOR",
+        distance: ancestorById.get(String(user.userId)).distance,
+      }))
+      .sort((a, b) => a.distance - b.distance || a.userName.localeCompare(b.userName));
+    const scopedRoleIds = new Set(scopedUsers.map((user) => String(user.roleId)));
+    return {
+      roles: roles.filter((role) => scopedRoleIds.has(String(role.roleId))),
+      users: scopedUsers,
+    };
   }
 
   /** Maps an internal request type back to the canonical API alias. */

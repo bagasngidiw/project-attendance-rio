@@ -652,6 +652,87 @@ FR-002/FR-003/FR-004 are independent of each other but all live inside the FR-00
 
 ---
 
+## Contract and Placement Hierarchy Module (Approved 2026-10-25)
+
+The following scope is appended to preserve all previous TODO history. The
+approved design is documented in:
+
+- `ai-project-context/hierarchy-module-prd.md`
+- `ai-project-context/hierarchy-module-implementation-prompt.md`
+
+### HIER-FR-001: Contract and placement scoped hierarchy chart
+
+- [x] Implement one hierarchy chart per active Contract + Placement combination.
+- [x] Validate active contract-placement references and prevent duplicate scopes.
+- [x] Do not create a new Division/Bidang master for this feature.
+
+### HIER-FR-002: Hierarchy collections and audit history
+
+- [x] Add `contract_placements`, `hierarchies`, and `hierarchy_history` persistence.
+- [x] Preserve `User.managerId` and legacy reporting history as compatibility data.
+- [x] Add optimistic versioning and append-only hierarchy mutation history.
+
+### HIER-FR-003: Visual hierarchy editor
+
+- [x] Add contract and placement selectors followed by `Buat Bagan Hirarki`.
+- [x] Add recursive chart cards with parent, child, left-sibling, and right-sibling actions.
+- [x] Add delete with safe child-promotion confirmation.
+- [x] Add responsive, loading, empty, error, and stale-version states.
+
+### HIER-FR-004: Server-backed hierarchy user selection
+
+- [x] Add searchable active-user autocomplete scoped to the selected contract and placement.
+- [x] Exclude users already present in the chart.
+- [x] Display existing role/position metadata without assigning roles from the chart.
+
+### HIER-FR-005: Hierarchy RBAC permissions
+
+- [x] Register and mirror `hierarchy:view` and `hierarchy:manage`.
+- [x] Add the permissions to seed/checklist/navigation/Role Wizard surfaces.
+- [x] Keep chart permissions separate from attendance/request/report/approval permissions.
+
+### HIER-FR-006: Hierarchy-aware data scope
+
+- [x] Implement a reusable direct/recursive descendant resolver.
+- [x] Make explicit role data scope authoritative without weakening module permissions.
+- [x] Apply server-side scope intersection to Attendance, Overtime, Trip, Leave, Permission, Sakit, Reports, Dashboard, and request detail/list operations.
+- [x] Prevent employee-id/search filters from bypassing the resolved scope.
+
+### HIER-FR-007: Hierarchy-aware approval targets
+
+- [x] Resolve all active eligible ancestors above the requester, nearest first.
+- [x] Enforce current RBAC role membership, request-type approval configuration, approval permission, level, and self-approval policy.
+- [x] Persist hierarchy/version/ancestor snapshots in approval configuration snapshots.
+- [x] Reject submission when no eligible ancestor approver exists for a user with contract/placement master assignment.
+
+### HIER-FR-008: Hierarchy-aware approval inbox
+
+- [x] Return only pending requests the logged-in user can act on for new hierarchy-snapshotted requests.
+- [x] Keep role-target claim atomic and enforce the selected role/ancestor boundary.
+- [x] Make legacy and unified decision paths persist consistent embedded approval fields.
+
+### HIER-FR-009: Migration and compatibility
+
+- [x] Preserve existing manager/reporting/request/audit data.
+- [x] Keep legacy users without contract/placement assignments compatible while requiring charts for assigned master-data users.
+- [x] Reject user contract/placement changes that invalidate active hierarchy membership until corrected.
+
+### HIER-FR-010: Automated verification
+
+- [x] Add hierarchy domain/service unit tests.
+- [x] Add hierarchy API/integration tests.
+- [x] Add visibility, approval-target, inbox, security, and concurrency coverage through hierarchy/approval regression tests.
+- [x] Add deterministic frontend coverage through strict TypeScript build and ESLint for the new chart/combobox components (the repository has no frontend test runner).
+- [x] Run backend unit tests, targeted integration tests, frontend build, frontend lint, syntax checks, and `git diff --check` using isolated non-production configuration.
+
+### Hierarchy Implementation Notes
+
+- Existing users without `contractTypeId`/`placementId` continue using the legacy approval fallback so historical/demo accounts remain compatible. Users assigned to master contract and placement data must have an active chart before submitting approval requests.
+- The current master data is flat, so active placements are valid for an active contract unless `contract_placements` rows exist for that contract; once rows exist, they restrict placement choices.
+- No production `.env` values or live database were modified. Integration tests use the isolated test database convention.
+
+---
+
 ## Absensi Report Location Enhancement
 
 ### Scope and Decision Record
@@ -977,6 +1058,32 @@ recreate the app supervisor/mapping. Until that is fixed,
 
 Credential rotation requires cPanel and MongoDB Atlas access and must not be fabricated or performed with guessed values. Existing secret values are intentionally not recorded in this TODO.
 
+### DEPLOY-FR-005: Make public pre-login endpoints CORS-open (durability)
+
+- [x] Replace the single global strict CORS middleware with a path-aware
+  selector: public endpoints (`/health`, `/api/v1/platform/branding`,
+  `/api/v1/platform/branding-assets`) use `Access-Control-Allow-Origin: *`
+  with no credentials; all other endpoints (including every authenticated API)
+  keep the strict allow-list + credentials policy.
+- [x] Preflight (OPTIONS) handled by the cors middleware for both policies.
+- [x] Verified: `/health` and `/api/v1/platform/branding` return
+  `Access-Control-Allow-Origin: *`; `/api/v1/users` with a disallowed origin
+  returns no ACAO (browser blocks); allowed origin returns the echoed origin.
+- [x] Branding integration tests (4/4) and full unit suite (782/782) pass.
+
+#### Implementation Notes
+
+Implemented in `backend/server.js` (CORS selector block). Public endpoints
+expose only non-sensitive branding/health data and never use credentials, so
+`*` is safe and prevents a stale/misconfigured `CORS_ORIGINS` from breaking
+the pre-login branding bootstrap (the failure seen in `stderr.log`).
+
+Remaining (out of scope, hosting/env tasks):
+- DEPLOY-FR-003: repair the CloudLinux/LiteSpeed Passenger spawn so
+  `api.simbika.com` actually serves Node (currently 503).
+- DEPLOY-FR-004: set `CORS_ORIGINS` to the real production origins for the
+  authenticated endpoints.
+
 ### Deployment Implementation Summary
 
 #### Completed
@@ -1016,3 +1123,65 @@ Credential rotation requires cPanel and MongoDB Atlas access and must not be fab
 - [x] Frontend remains available at `https://simbika.com/`.
 - [x] Production frontend build and FTP deployment completed; remote `/public_html/.htaccess` SHA-256 remains `e5fb29699f41c6678cd07b3ae639953051408293bf639b5c9d5dd8e1d15ee9f4`.
 - [ ] API health endpoint verified after the host-level application spawn issue is fixed.
+
+---
+
+## Hierarchy Module Implementation Summary (2026-10-25)
+
+### Completed
+
+- HIER-FR-001 through HIER-FR-010
+
+### Files Added
+
+- `ai-project-context/hierarchy-module-prd.md`
+- `ai-project-context/hierarchy-module-implementation-prompt.md`
+- `backend/src/domain/hierarchy.js`
+- `backend/src/application/hierarchy.service.js`
+- `backend/src/application/hierarchy-scope.service.js`
+- `backend/src/infrastructure/models/contract-placement.model.js`
+- `backend/src/infrastructure/models/hierarchy.model.js`
+- `backend/src/infrastructure/models/hierarchy-history.model.js`
+- `backend/src/infrastructure/repositories/contract-placement.repository.js`
+- `backend/src/infrastructure/repositories/hierarchy.repository.js`
+- `backend/src/infrastructure/repositories/hierarchy-history.repository.js`
+- `backend/src/presentation/controllers/hierarchy.controller.js`
+- `backend/src/presentation/dto/hierarchy.dto.js`
+- `backend/src/presentation/routes/hierarchy.routes.js`
+- `backend/test/unit/hierarchy.domain.test.js`
+- `backend/test/integration/hierarchy.api.test.js`
+- `contracts/hierarchy.ts`
+- `frontend/src/features/hierarchy/HierarchyPage.tsx`
+- `frontend/src/pages/Hierarchy/index.tsx`
+
+### Files Updated
+
+- Backend composition root, RBAC registry/seed/navigation/checklist, approval engine/targets/inbox, attendance/request/report/dashboard scope handling, audit catalog, user master-data protection, repositories, and test fakes.
+- Frontend routes, sidebar, breadcrumbs, Axios client, request module pages, Permission/Sakit pages, and shared contracts.
+- `ai-project-context/project-context.md` and this TODO history.
+
+### Database Changes
+
+- Added Mongoose models/collections for `contract_placements`, `hierarchies`, and `hierarchy_histories`.
+- No existing records were deleted or rewritten.
+
+### API Changes
+
+- Added `/api/v1/hierarchies` chart and node operations.
+- Added `/api/v1/hierarchies/placements` and `/api/v1/hierarchies/:id/users`.
+- Added `/api/v1/requests/visible` for hierarchy-scoped request data.
+- Existing attendance, report, dashboard, approval target, approval inbox, and request detail behavior now applies hierarchy scope where configured.
+
+### Remaining Work
+
+- None for the approved hierarchy scope. Existing unrelated deployment blockers in this TODO remain unchanged.
+
+### Verification
+
+- [x] Backend unit suite: 782/782 passed.
+- [x] Full backend integration suite: 132/132 passed, including attendance visibility, request visibility, ancestor targets, approval snapshots, and legacy compatibility paths.
+- [x] Frontend TypeScript/Vite production build passed.
+- [x] Frontend ESLint passed.
+- [x] Backend syntax checks passed.
+- [x] `git diff --check` passed.
+- [x] Production environment and live database were not modified.

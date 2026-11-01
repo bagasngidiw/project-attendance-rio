@@ -116,6 +116,8 @@ export interface ApprovalTargetUserDto {
   roleId: string;
   roleName: string;
   approvalLevel: number;
+  relation?: "ANCESTOR";
+  distance?: number;
 }
 
 /** GET /approval-targets?type=... payload. */

@@ -26,14 +26,16 @@ import { useLeaveTypeNames, leaveSummaryName, useSicknessTypeNames, sicknessSumm
 
 export function RequestDetailDialog({
   requestId,
+  visible = false,
   onClose,
 }: {
   requestId: string;
+  visible?: boolean;
   onClose: () => void;
 }) {
   const { data, isLoading, isError } = useQuery({
-    queryKey: ["request", requestId],
-    queryFn: () => requestApi.get(requestId).then((r) => r.data.data),
+    queryKey: [visible ? "visible-request" : "request", requestId],
+    queryFn: () => (visible ? requestApi.getVisible(requestId) : requestApi.get(requestId)).then((r) => r.data.data),
   });
   const names = useLeaveTypeNames();
   const sicknessNames = useSicknessTypeNames();

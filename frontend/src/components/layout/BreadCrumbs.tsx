@@ -19,6 +19,7 @@ const TITLES: Record<string, string> = {
   admin: "Administrasi",
   roles: "Peran & Izin",
   rbac: "Peran & Izin",
+  hierarchy: "Hirarki",
   settings: "Pengaturan Platform",
 };
 

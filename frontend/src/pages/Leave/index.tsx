@@ -11,6 +11,7 @@ export default function Leave() {
       title="Cuti"
       description="Ajukan permintaan cuti sakit, pribadi, atau tahunan dan pantau statusnya."
       submitPermission={PERMISSIONS.LEAVE_SUBMIT}
+      viewPermission={PERMISSIONS.LEAVE_VIEW_ALL}
       submit={async (
         input,
         approvalTarget: ApprovalTargetValue | null

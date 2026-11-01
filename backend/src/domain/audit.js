@@ -126,6 +126,12 @@ const AUDIT_EVENTS = Object.freeze([
   "APPROVAL_CONFIG_UPDATED",
   "REQUEST.ASSIGNED",
   "REQUEST.CLAIMED",
+  // Contract + placement hierarchy chart
+  "HIERARCHY.CREATED",
+  "HIERARCHY.NODE_ADDED",
+  "HIERARCHY.NODE_REMOVED",
+  "HIERARCHY.ACTIVATED",
+  "HIERARCHY.ARCHIVED",
 ]);
 
 /** Activity-only events (operational surface, FR-013): sensitive-record views. */
@@ -220,6 +226,11 @@ const BOTH_SURFACES = Object.freeze([
   "APPROVAL_CONFIG_UPDATED",
   "REQUEST.ASSIGNED",
   "REQUEST.CLAIMED",
+  "HIERARCHY.CREATED",
+  "HIERARCHY.NODE_ADDED",
+  "HIERARCHY.NODE_REMOVED",
+  "HIERARCHY.ACTIVATED",
+  "HIERARCHY.ARCHIVED",
 ]);
 
 const EVENT_SET = new Set(ALL_EVENTS);

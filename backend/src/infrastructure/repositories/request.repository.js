@@ -56,6 +56,11 @@ class RequestRepository {
     return RequestModel.findOne({ _id: id, requesterId });
   }
 
+  async findOneByIdAndRequesterIds(id, requesterIds) {
+    if (!requesterIds || requesterIds.length === 0) return null;
+    return RequestModel.findOne({ _id: id, requesterId: { $in: requesterIds } });
+  }
+
   /**
    * Paginated requester history with filters (FR-037 foundation).
    *
@@ -81,6 +86,28 @@ class RequestRepository {
       RequestModel.countDocuments(filter),
     ]);
 
+    return { items, total };
+  }
+
+  /** Hierarchy-visible request history for a concrete allowed requester set. */
+  async findByRequesterIds(requesterIds, { status, type, from, to, page = 1, pageSize = 20 } = {}) {
+    if (!requesterIds || requesterIds.length === 0) return { items: [], total: 0 };
+    const filter = { requesterId: { $in: requesterIds } };
+    if (status) filter.status = status;
+    if (type) filter.type = type;
+    if (from || to) {
+      filter.submittedAt = {};
+      if (from) filter.submittedAt.$gte = new Date(from);
+      if (to) filter.submittedAt.$lte = new Date(to);
+    }
+    const [items, total] = await Promise.all([
+      RequestModel.find(filter)
+        .sort({ submittedAt: -1, _id: -1 })
+        .skip((page - 1) * pageSize)
+        .limit(pageSize)
+        .lean(),
+      RequestModel.countDocuments(filter),
+    ]);
     return { items, total };
   }
 
@@ -238,11 +265,13 @@ class RequestRepository {
    *
    * @param {{ limit?: number }} options
    */
-  async findRecentDecisions({ limit = 5 } = {}) {
-    return RequestModel.find({
+  async findRecentDecisions({ limit = 5, requesterIds = null } = {}) {
+    const filter = {
       status: { $in: ["APPROVED", "REJECTED"] },
       decidedAt: { $ne: null },
-    })
+    };
+    if (requesterIds) filter.requesterId = { $in: requesterIds };
+    return RequestModel.find(filter)
       .sort({ decidedAt: -1, _id: -1 })
       .limit(limit)
       .lean();

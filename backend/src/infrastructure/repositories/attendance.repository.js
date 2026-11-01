@@ -91,6 +91,12 @@ class AttendanceRepository {
     return AttendanceModel.findOne({ _id: id, userId });
   }
 
+  /** Scope-bound lookup for a hierarchy-visible set of users. */
+  async findByIdInUsers(id, userIds) {
+    if (!userIds || userIds.length === 0) return null;
+    return AttendanceModel.findOne({ _id: id, userId: { $in: userIds } });
+  }
+
   /**
    * Personal history: date-ordered, filtered, paginated (FR-035).
    *
@@ -148,12 +154,14 @@ class AttendanceRepository {
   }
 
   /** Open shifts for a set of users (PendingSummary "attendance" provider). */
-  async countOpenShiftsForUserIds(userIds) {
+  async countOpenShiftsForUserIds(userIds, date = null) {
     if (!userIds || userIds.length === 0) return 0;
-    return AttendanceModel.countDocuments({
+    const filter = {
       userId: { $in: userIds },
       clockOutAt: null,
-    });
+    };
+    if (date) filter.date = date;
+    return AttendanceModel.countDocuments(filter);
   }
 
   /** Company-wide open shifts on a work day (FR-026 clocked-in count). */
@@ -167,8 +175,9 @@ class AttendanceRepository {
   }
 
   /** Records flagged EXCEPTION within an optional date range (FR-026). */
-  async countExceptionsInRange({ from, to } = {}) {
+  async countExceptionsInRange({ from, to, userIds = null } = {}) {
     const filter = { status: "EXCEPTION" };
+    if (userIds) filter.userId = { $in: userIds };
     if (from || to) {
       filter.date = {};
       if (from) filter.date.$gte = from;

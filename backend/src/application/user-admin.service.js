@@ -47,6 +47,7 @@ class UserAdminService {
     eventBus = null,
     leaveTypeRepository = null,
     leaveBalanceService = null,
+    hierarchyService = null,
   }) {
     this.userRepository = userRepository;
     this.roleRepository = roleRepository;
@@ -59,6 +60,7 @@ class UserAdminService {
     this.placementService = placementService;
     this.leaveTypeRepository = leaveTypeRepository;
     this.leaveBalanceService = leaveBalanceService;
+    this.hierarchyService = hierarchyService;
     this.eventBus = eventBus;
   }
 
@@ -247,6 +249,22 @@ class UserAdminService {
    */
   async updateUser(userId, input, actor = {}) {
     const user = await this.userRepository.assertExists(userId);
+
+    if (this.hierarchyService && (input.contractTypeId !== undefined || input.placementId !== undefined)) {
+      const membership = await this.hierarchyService.locateUser(userId);
+      const nextContract = input.contractTypeId !== undefined ? input.contractTypeId : user.contractTypeId;
+      const nextPlacement = input.placementId !== undefined ? input.placementId : user.placementId;
+      if (
+        membership?.chart &&
+        (String(nextContract ?? "") !== String(user.contractTypeId ?? "") ||
+          String(nextPlacement ?? "") !== String(user.placementId ?? ""))
+      ) {
+        throw new ConflictError(
+          "Pindahkan atau hapus user dari bagan hirarki aktif sebelum mengubah kontrak/penempatan.",
+          "HIERARCHY_ASSIGNMENT_CONFLICT"
+        );
+      }
+    }
 
     if (input.email !== undefined && input.email !== "") {
       new Email(input.email);

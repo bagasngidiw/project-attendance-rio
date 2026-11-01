@@ -11,6 +11,7 @@ export default function BusinessTrip() {
       title="Perjalanan Dinas"
       description="Ajukan permintaan perjalanan dinas dan pantau statusnya."
       submitPermission={PERMISSIONS.TRIP_SUBMIT}
+      viewPermission={PERMISSIONS.TRIP_VIEW_ALL}
       submit={async (
         input,
         approvalTarget: ApprovalTargetValue | null

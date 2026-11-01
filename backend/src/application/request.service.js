@@ -400,6 +400,27 @@ class RequestService {
     };
   }
 
+  /** Hierarchy-scoped request list used by manager-facing module views. */
+  async listVisible(requesterIds, filters = {}) {
+    const queryFilters = { ...filters };
+    if (queryFilters.status === "PENDING_APPROVAL") queryFilters.status = REQUEST_STATUS.PENDING;
+    const { items, total } = await this.requestRepository.findByRequesterIds(requesterIds, queryFilters);
+    return {
+      items: await Promise.all(items.map((item) => this.toHistoryItem(item))),
+      total,
+      page: filters.page ?? 1,
+      pageSize: filters.pageSize ?? 20,
+    };
+  }
+
+  /** Scope-bound detail for a manager-facing hierarchy view. */
+  async getByIdInScope(requestId, requesterIds) {
+    const request = await this.requestRepository.findOneByIdAndRequesterIds(requestId, requesterIds);
+    if (!request) throw new NotFoundError("Request not found.", "REQUEST_NOT_FOUND");
+    const events = await this.requestEventRepository.findByRequestId(requestId);
+    return { ...this.toDto(request), events: events.map((event) => this.toEventDto(event)) };
+  }
+
   /** Enriches a request DTO for the employee history surface (FR-037). */
   async toHistoryItem(item) {
     const dto = this.toDto(item);

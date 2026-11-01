@@ -136,6 +136,8 @@ const ROLE_SEED = Object.freeze([
       // HR_ADMIN can inspect the RBAC console, but all writes are rbac:manage_*.
       "rbac:view_roles",
       "rbac:view_permissions",
+      "hierarchy:view",
+      "hierarchy:manage",
       "audit:view",
     ],
   },

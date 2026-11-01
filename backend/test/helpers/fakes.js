@@ -1005,6 +1005,22 @@ class InMemoryRequestRepository {
     if (to) items = items.filter((r) => r[field] && new Date(r[field]) <= new Date(to));
     for (const [key, value] of Object.entries(extra)) {
       items = items.filter((r) => {
+        if (key === "$or") {
+          return value.some((branch) =>
+            Object.entries(branch).every(([branchKey, branchValue]) => {
+              if (branchKey === "approval.configurationSnapshot.eligibleApproverIds") {
+                return branchValue === r.approval?.configurationSnapshot?.eligibleApproverIds;
+              }
+              if (branchKey === "approval.configurationSnapshot") {
+                return branchValue === null && !r.approval?.configurationSnapshot;
+              }
+              return matchIn(branchValue, branchKey, r);
+            })
+          );
+        }
+        if (key === "$and") {
+          return value.every((branch) => Object.entries(branch).every(([branchKey, branchValue]) => r[branchKey] === branchValue));
+        }
         if (value && typeof value === "object" && "$in" in value) {
           return value.$in.map(String).includes(String(r[key]));
         }

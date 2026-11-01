@@ -29,6 +29,7 @@ const CHECKLIST_GROUPS = Object.freeze([
   { key: "AUDIT", label: "Log Aktivitas & Audit" },
   { key: "RBAC", label: "Manajemen Peran & Izin" },
   { key: "PLATFORM", label: "Administrasi Sistem" },
+  { key: "HIERARCHY", label: "Hirarki Kontrak & Penempatan" },
   { key: "TEAM", label: "Tim & Delegasi" },
   { key: "PROFILE", label: "Profil & Akun" },
   { key: "FILES", label: "Berkas & Lampiran" },

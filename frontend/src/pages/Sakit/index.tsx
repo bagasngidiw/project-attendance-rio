@@ -18,6 +18,7 @@ import { requestApi, sicknessTypeApi, attachmentApi } from "@/lib/axios";
 import { toast } from "@/lib/toast";
 import { apiErrorMessage } from "@/lib/apiError";
 import { Can } from "@/features/auth/Can";
+import { usePermission } from "@/features/auth/usePermission";
 import { ApprovalTargetSelector } from "@/features/approval/ApprovalTargetSelector";
 import { approvalTargetTypeFor } from "@/lib/approvalTarget";
 import { Spinner } from "@/components/ui/Spinner";
@@ -50,6 +51,9 @@ export default function Sakit() {
   const [suggestingLoading, setSuggestingLoading] = useState(false);
 
   const [status, setStatus] = useState("");
+  const { hasPermission } = usePermission();
+  const canViewSubordinates = hasPermission(PERMISSIONS.SAKIT_VIEW_ALL);
+  const [scope, setScope] = useState<"mine" | "visible">(canViewSubordinates ? "visible" : "mine");
   const [page, setPage] = useState(1);
   const [detailId, setDetailId] = useState<string | null>(null);
   const [cancelling, setCancelling] = useState<RequestDto | null>(null);
@@ -68,8 +72,8 @@ export default function Sakit() {
   };
 
   const { data, isLoading, isError, refetch } = useQuery({
-    queryKey: ["my-requests", params],
-    queryFn: () => requestApi.mine(params).then((r) => r.data.data),
+    queryKey: [scope === "visible" ? "visible-requests" : "my-requests", params],
+    queryFn: () => (scope === "visible" ? requestApi.visible(params) : requestApi.mine(params)).then((r) => r.data.data),
   });
 
   const items = data?.items ?? [];
@@ -380,6 +384,16 @@ export default function Sakit() {
 
         <div className="space-y-4">
           <div className="flex flex-wrap items-end gap-3 rounded-xl border border-slate-200 bg-[var(--brand-surface)] p-4">
+            {canViewSubordinates ? (
+              <div className="flex w-full gap-2 sm:w-auto">
+                <Button size="sm" variant={scope === "visible" ? "primary" : "secondary"} onClick={() => { setScope("visible"); setPage(1); }}>
+                  Data Hirarki
+                </Button>
+                <Button size="sm" variant={scope === "mine" ? "primary" : "secondary"} onClick={() => { setScope("mine"); setPage(1); }}>
+                  Permintaan Saya
+                </Button>
+              </div>
+            ) : null}
             <div className="w-full sm:w-44">
               <label className="mb-1.5 block text-sm font-medium text-slate-700">
                 Status
@@ -493,7 +507,7 @@ export default function Sakit() {
       </div>
 
       {detailId ? (
-        <RequestDetailDialog requestId={detailId} onClose={() => setDetailId(null)} />
+        <RequestDetailDialog requestId={detailId} visible={scope === "visible"} onClose={() => setDetailId(null)} />
       ) : null}
       {cancelling ? (
         <CancelSakitDialog

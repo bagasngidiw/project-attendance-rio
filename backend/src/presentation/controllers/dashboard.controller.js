@@ -6,8 +6,9 @@ const { hrFiltersSchema } = require("../dto/dashboard.dto");
 const { ValidationError } = require("../../domain/errors");
 
 class DashboardController {
-  constructor({ dashboardService }) {
+  constructor({ dashboardService, hierarchyScopeService = null }) {
     this.dashboardService = dashboardService;
+    this.hierarchyScopeService = hierarchyScopeService;
   }
 
   /** GET /dashboard/me — personal summary (scoped to the signed-in user). */
@@ -35,6 +36,12 @@ class DashboardController {
       const data = await this.dashboardService.getHrSummary({
         permissions: req.auth.permissions,
         filters: parsed.data,
+        visibleUserIds: this.hierarchyScopeService
+          ? await this.hierarchyScopeService.resolveVisibleUserIds({
+              actorId: req.auth.userId,
+              actorRoleKeys: req.auth.roles,
+            })
+          : null,
       });
       res.status(200).json({ data });
     } catch (err) {

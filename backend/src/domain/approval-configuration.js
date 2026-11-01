@@ -119,6 +119,12 @@ function buildSnapshot({
   targetRoleName = null,
   targetRoleLevel = null,
   targetUserName = null,
+  hierarchyId = null,
+  hierarchyVersion = null,
+  requesterNodeId = null,
+  ancestorChain = [],
+  eligibleApproverIds = [],
+  explicitTarget = true,
 }) {
   return {
     requestType,
@@ -128,6 +134,12 @@ function buildSnapshot({
     targetRoleLevel,
     targetUserId: targetUserId ? String(targetUserId) : null,
     targetUserName,
+    hierarchyId: hierarchyId ? String(hierarchyId) : null,
+    hierarchyVersion,
+    requesterNodeId: requesterNodeId ? String(requesterNodeId) : null,
+    ancestorChain,
+    eligibleApproverIds: eligibleApproverIds.map(String),
+    explicitTarget: explicitTarget === true,
   };
 }
 

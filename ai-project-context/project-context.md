@@ -24,7 +24,8 @@ Key architectural facts:
 
 - **Clean Architecture** on the backend: `presentation` (controllers/routes/DTOs) → `application` (services) → `domain` (pure business rules) → `infrastructure` (Mongoose models, repositories, middleware, seed). Wired manually via constructor dependency injection in the composition root `backend/server.js`.
 - **Single polymorphic request store**: all request types (Leave, Overtime, Business Trip, Permission, Sickness) are stored in one `requests` collection discriminated by `type`, with an embedded `approval` subdocument.
-- **The approval workflow revamp (FR-001/002/003/063) is fully implemented**: configurable role-level approval configuration, role-vs-user approval targets, atomic claiming, mandatory rejection reasons, configuration snapshots, approval history, and audit events.
+- **The approval workflow revamp (FR-001/002/003/063) is fully implemented**: configurable role-level approval configuration, role-vs-user approval targets, atomic claiming, mandatory rejection reasons, configuration snapshots, approval history, and audit events. When a requester has an active hierarchy chart, approval targets and snapshots are narrowed to eligible ancestors.
+- **The approved contract/placement hierarchy module is implemented additively**: one chart per contract + placement, visual user-node editing with optimistic locking, hierarchy RBAC permissions, hierarchy-scoped attendance/request visibility, and hierarchy-aware approval snapshots. See `ai-project-context/hierarchy-module-prd.md`.
 - **Tamper-evident audit logging** via a SHA-256 hash chain with an outbox-based capture pipeline.
 - **Comprehensive test suite**: ~90 backend test files (unit + integration) using the built-in `node:test` runner, in-memory repository fakes, and `supertest` integration tests against isolated test MongoDBs.
 - The feature backlog (`BACKLOG.md`) defines **FR-001 through FR-064**; the majority are implemented (marked `[x]`).
@@ -121,7 +122,7 @@ C:\Attendance System\
 │   ├── branding-assets/        # Uploaded brand logos (local disk)
 │   ├── scripts/                # migrate-approval.js, reset-database.js
 │   ├── src/
-│   │   ├── application/        # 46 service classes (use cases / business orchestration)
+│   │   ├── application/        # service classes (use cases / business orchestration), including hierarchy + scope resolution
 │   │   ├── domain/             # Pure business rules, enums, invariants (no I/O)
 │   │   ├── infrastructure/     # models/, repositories/, middleware/, storage/, exporters/, seed/, config, event-bus, audit-publisher, token-provider, password-hasher
 │   │   └── presentation/       # controllers/, dto/ (zod), routes/
@@ -139,10 +140,10 @@ C:\Attendance System\
         ├── constants/ (routes.ts, sidebar.ts)
         ├── components/ (layout/, ui/)
         ├── context/ (SidebarProvider)
-        ├── features/ (auth, approvals, approval-config, approval, attendance, audit, dashboard, navigation, org, rbac-admin, reports, requests, team, users, admin, branding)
+        ├── features/ (auth, approvals, approval-config, approval, attendance, audit, dashboard, hierarchy, navigation, org, rbac-admin, reports, requests, team, users, admin, branding)
         ├── layouts/ (MainLayout, AuthLayout)
         ├── lib/ (axios, apiError, auth-storage, branding, labels, permission, toast, utils, approvalTarget)
-        ├── pages/ (Login, Dashboard, Attendance, Overtime, BusinessTrip, Leave, Permission, Sakit, MyRequests, Notifications, Team, Users, Org, Reports, Profile, Approvals, Forbidden, ChangePassword, PlatformSettings)
+        ├── pages/ (Login, Dashboard, Attendance, Overtime, BusinessTrip, Leave, Permission, Sakit, Hierarchy, MyRequests, Notifications, Team, Users, Org, Reports, Profile, Approvals, Forbidden, ChangePassword, PlatformSettings)
         └── types/ (user.ts, sidebar.ts)
 ```
 
@@ -776,4 +777,17 @@ flowchart TD
     REPO --> DB
 ```
 
-**Bottom line:** a single-app enterprise HRIS with a clean-layered Express backend, a polymorphic request + approval engine, tamper-evident audit, permission-driven navigation, and a feature-based React frontend. The approval-workflow revamp (AGENTS.md) and the attendance revamp (jamkerja.md/TODO.md) are largely implemented. Future work should extend this architecture — never replace it.
+**Bottom line:** a single-app enterprise HRIS with a clean-layered Express backend, a polymorphic request + approval engine, tamper-evident audit, permission-driven navigation, a contract/placement hierarchy scope, and a feature-based React frontend. The approval-workflow revamp (AGENTS.md), attendance revamp (jamkerja.md/TODO.md), and approved hierarchy module are implemented additively. Future work should extend this architecture — never replace it.
+
+---
+
+## 25. Contract and Placement Hierarchy (implemented 2026-10-25)
+
+- One `Hierarchy` document represents one contract + placement chart. Nodes contain `userId`, `parentNodeId`, and `sortOrder`; roles are never assigned by the chart.
+- `HierarchyService` owns chart creation, active-user selection, parent/child/sibling insertion, safe deletion, activation, audit history, and optimistic version conflicts.
+- `HierarchyScopeService` resolves role `dataScope` against active charts and falls back to the legacy `managerId` relationship only for users without a chart.
+- `hierarchy:view` and `hierarchy:manage` are registered in the backend permission registry, frontend mirror, seed/checklist, server navigation, and Role Wizard metadata.
+- Attendance overview/detail and shared request visible/detail endpoints intersect data with the resolved hierarchy user set. Request module pages expose `Data Hirarki` alongside `Permintaan Saya` when the user has the relevant module view permission.
+- Approval target resolution narrows users to active eligible ancestors when a requester has an active chart; request approval snapshots include hierarchy/version/ancestor context and eligible approver IDs. The unified inbox uses assignment/eligibility for new snapshotted requests while preserving legacy unsnapshotted compatibility.
+- Frontend entry: `/admin/hierarchy`, `features/hierarchy/HierarchyPage.tsx`, recursive CSS tree cards, server-backed eligible-user selection, and the existing UI primitives.
+- Automated coverage includes `backend/test/unit/hierarchy.domain.test.js` and `backend/test/integration/hierarchy.api.test.js`.

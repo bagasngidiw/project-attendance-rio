@@ -77,38 +77,49 @@ class DashboardService {
    *
    * @param {{ permissions?: string[], filters?: { from?: string, to?: string } }} options
    */
-  async getHrSummary({ permissions = [], filters = {} } = {}) {
+  async getHrSummary({ permissions = [], filters = {}, visibleUserIds = null } = {}) {
     if (!hasHrScope(permissions)) {
       throw new PermissionDeniedError("attendance:view_all");
     }
 
     const workDay = this.attendanceService.workDayFor();
 
-    const [totalActiveEmployees, byDepartment, clockedInToday, exceptions, recentDecisions] =
+    const [activeUsers, byDepartment, clockedInToday, exceptions, recentDecisions] =
       await Promise.all([
-        this.userRepository.countActiveUsers(),
-        this.userRepository.countActiveByDepartment(),
-        this.attendanceRepository.countOpenShiftsByDate(workDay),
+        visibleUserIds
+          ? this.userRepository.list({ status: "ACTIVE", userIds: visibleUserIds, page: 1, pageSize: 10000 }).then((result) => result.items)
+          : this.userRepository.listActiveUsers(),
+        visibleUserIds ? Promise.resolve(null) : this.userRepository.countActiveByDepartment(),
+        visibleUserIds
+          ? this.attendanceRepository.countOpenShiftsForUserIds(visibleUserIds, workDay)
+          : this.attendanceRepository.countOpenShiftsByDate(workDay),
         this.attendanceRepository.countExceptionsInRange({
           from: filters.from,
           to: filters.to,
+          userIds: visibleUserIds,
         }),
-        this.requestRepository.findRecentDecisions({ limit: 5 }),
+        this.requestRepository.findRecentDecisions({ limit: 5, requesterIds: visibleUserIds }),
       ]);
 
-    const [attendanceTodayUsers, activeUsers] = await Promise.all([
+    const totalActiveEmployees = activeUsers.length;
+    const scopedByDepartment = visibleUserIds ? summarizeDepartments(activeUsers) : byDepartment;
+
+    const [attendanceTodayUsers] = await Promise.all([
       this.attendanceRepository.distinctUserIdsOnDate(workDay),
-      this.userRepository.listActiveUsers(),
+      Promise.resolve(activeUsers),
     ]);
     const activeIds = activeUsers.map((u) => String(u._id ?? u.id));
-    const notStarted = Math.max(0, totalActiveEmployees - attendanceTodayUsers.length);
+    const notStarted = Math.max(
+      0,
+      totalActiveEmployees - attendanceTodayUsers.filter((id) => activeIds.includes(String(id))).length
+    );
 
     const pendingSummary = await this.pendingSummaryService.getPendingSummary(activeIds);
     const pendingTotal =
       pendingSummary.leave + pendingSummary.overtime + pendingSummary.trip;
 
     return {
-      workforce: { totalActiveEmployees, byDepartment: await this.enrichDepartmentNames(byDepartment) },
+      workforce: { totalActiveEmployees, byDepartment: await this.enrichDepartmentNames(scopedByDepartment) },
       attendanceSummary: { clockedInToday, notStarted, exceptions },
       pendingRequests: {
         leave: pendingSummary.leave,
@@ -167,6 +178,15 @@ class DashboardService {
       })
     );
   }
+}
+
+function summarizeDepartments(users) {
+  const counts = new Map();
+  for (const user of users) {
+    const departmentId = user.departmentId ? String(user.departmentId) : null;
+    counts.set(departmentId, (counts.get(departmentId) ?? 0) + 1);
+  }
+  return [...counts.entries()].map(([departmentId, count]) => ({ departmentId, count, name: null }));
 }
 
 /** Compact human-readable summary for a request (dashboard list). */

@@ -8,10 +8,11 @@
 const { mineQuerySchema } = require("../dto/request.dto");
 
 class RequestController {
-  constructor({ requestService, approvalService, approvalEngine = null }) {
+  constructor({ requestService, approvalService, approvalEngine = null, hierarchyScopeService = null }) {
     this.requestService = requestService;
     this.approvalService = approvalService;
     this.approvalEngine = approvalEngine;
+    this.hierarchyScopeService = hierarchyScopeService;
   }
 
   /** GET /requests/mine — the caller's own requests with filters + pagination. */
@@ -30,10 +31,43 @@ class RequestController {
     }
   };
 
+  /** GET /requests/visible — records belonging to the caller's hierarchy scope. */
+  visible = async (req, res, next) => {
+    try {
+      const parsed = mineQuerySchema.safeParse(req.query);
+      if (!parsed.success) {
+        const { ValidationError } = require("../../domain/errors");
+        next(new ValidationError("Invalid query filters.", { issues: parsed.error.issues }));
+        return;
+      }
+      const visibleIds = this.hierarchyScopeService
+        ? await this.hierarchyScopeService.resolveVisibleUserIds(this.actor(req))
+        : [req.auth.userId];
+      const ids = visibleIds ?? [req.auth.userId];
+      const data = await this.requestService.listVisible(ids, parsed.data);
+      res.status(200).json({ data });
+    } catch (err) {
+      next(err);
+    }
+  };
+
   /** GET /requests/:id — scoped detail + history timeline. */
   getById = async (req, res, next) => {
     try {
       const data = await this.requestService.getByIdScoped(req.params.id, req.auth.userId);
+      res.status(200).json({ data });
+    } catch (err) {
+      next(err);
+    }
+  };
+
+  /** GET /requests/visible/:id — hierarchy-scoped detail without changing the requester API. */
+  visibleDetail = async (req, res, next) => {
+    try {
+      const visibleIds = this.hierarchyScopeService
+        ? await this.hierarchyScopeService.resolveVisibleUserIds(this.actor(req))
+        : [req.auth.userId];
+      const data = await this.requestService.getByIdInScope(req.params.id, visibleIds ?? [req.auth.userId]);
       res.status(200).json({ data });
     } catch (err) {
       next(err);

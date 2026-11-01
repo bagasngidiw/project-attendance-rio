@@ -49,6 +49,12 @@ export interface RequestApprovalDto {
     targetRoleLevel?: number | null;
     targetUserId?: string | null;
     targetUserName?: string | null;
+    hierarchyId?: string | null;
+    hierarchyVersion?: number | null;
+    requesterNodeId?: string | null;
+    ancestorChain?: Array<Record<string, unknown>>;
+    eligibleApproverIds?: string[];
+    explicitTarget?: boolean;
   } | null;
 }
 

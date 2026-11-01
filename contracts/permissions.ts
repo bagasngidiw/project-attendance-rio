@@ -83,6 +83,9 @@ export const PERMISSIONS = {
 
   APPROVAL_CONFIG_MANAGE: "approval_config:manage",
 
+  HIERARCHY_VIEW: "hierarchy:view",
+  HIERARCHY_MANAGE: "hierarchy:manage",
+
   PERMISSION_SUBMIT: "permission:submit",
   PERMISSION_VIEW_OWN: "permission:view_own",
   PERMISSION_VIEW_ALL: "permission:view_all",

@@ -38,12 +38,14 @@ class ReportService {
     registry,
     userRepository,
     auditService,
+    hierarchyScopeService = null,
     reverseGeocoder = null,
     geocoding = {},
   }) {
     this.registry = registry;
     this.userRepository = userRepository;
     this.auditService = auditService;
+    this.hierarchyScopeService = hierarchyScopeService;
     this.reverseGeocoder = reverseGeocoder;
     this.geocoding = geocoding;
   }
@@ -68,21 +70,32 @@ class ReportService {
    * @param {string|null} scope
    * @param {string|null} callerId
    */
-  async resolveUserIds(filters, scope = null, callerId = null) {
+  async resolveUserIds(filters, scope = null, callerId = null, visibleUserIds = null) {
+    const intersect = (ids) => {
+      if (!visibleUserIds) return ids;
+      const allowed = new Set(visibleUserIds.map(String));
+      return (ids ?? []).filter((id) => allowed.has(String(id)));
+    };
     if (filters.employeeSearch) {
       const { items } = await this.userRepository.list({
         search: filters.employeeSearch,
         page: 1,
         pageSize: 10000,
       });
-      return items.map((u) => String(u._id ?? u.id));
+      return intersect(items.map((u) => String(u._id ?? u.id)));
     }
-    if (filters.employeeId) return [filters.employeeId];
+    if (filters.employeeId) return intersect([filters.employeeId]);
     if (scope === "team" && callerId) {
       const reports = await this.userRepository.findDirectReports(callerId);
-      return reports.map((u) => String(u._id ?? u.id));
+      return intersect(reports.map((u) => String(u._id ?? u.id)));
     }
-    return null;
+    return visibleUserIds ? [...visibleUserIds] : null;
+  }
+
+  async resolveHierarchyVisibleUserIds(actor) {
+    return this.hierarchyScopeService
+      ? this.hierarchyScopeService.resolveVisibleUserIds(actor)
+      : null;
   }
 
   /** True when the caller may request a team-scoped report (FR-038). */
@@ -112,7 +125,8 @@ class ReportService {
       throw new PermissionDeniedError("team:view_team");
     }
 
-    const userIds = await this.resolveUserIds(filters, scope, actor.actorId);
+    const visibleUserIds = await this.resolveHierarchyVisibleUserIds(actor);
+    const userIds = await this.resolveUserIds(filters, scope, actor.actorId, visibleUserIds);
     const rows = await provider.query({ userIds, filters });
     const projected = rows.map((row) => projectRow(typeKey, row));
 
@@ -168,7 +182,8 @@ class ReportService {
       throw new ReportUnavailableError(typeKey);
     }
 
-    const userIds = await this.resolveUserIds(filters, scope, actor.actorId);
+    const visibleUserIds = await this.resolveHierarchyVisibleUserIds(actor);
+    const userIds = await this.resolveUserIds(filters, scope, actor.actorId, visibleUserIds);
     const rows = await provider.query({ userIds, filters });
     const projected = rows.map((row) => projectRow(typeKey, row));
     const enriched = await this.enrichLocations(
@@ -227,7 +242,8 @@ class ReportService {
       throw new PermissionDeniedError("team:view_team");
     }
 
-    const userIds = await this.resolveUserIds(filters, scope, actor.actorId);
+    const visibleUserIds = await this.resolveHierarchyVisibleUserIds(actor);
+    const userIds = await this.resolveUserIds(filters, scope, actor.actorId, visibleUserIds);
     const sections = [];
 
     for (const key of REPORT_TYPE_KEYS) {

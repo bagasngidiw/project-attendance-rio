@@ -123,6 +123,16 @@ import type {
   BrandingResponse,
   BrandingUpdateDto,
 } from "@contracts/platform";
+import type {
+  AddHierarchyNodeRequest,
+  CreateHierarchyRequest,
+  HierarchyHistoryResponse,
+  HierarchyListResponse,
+  HierarchyPlacementsResponse,
+  HierarchyResponse,
+  HierarchyUsersResponse,
+  RemoveHierarchyNodeRequest,
+} from "@contracts/hierarchy";
 
 import {
   clearAuthStorage,
@@ -521,7 +531,11 @@ export const requestApi = {
   mine: (params: Record<string, unknown>) =>
     api.get<RequestListResponse>("/requests/mine", { params }),
 
+  visible: (params: Record<string, unknown>) =>
+    api.get<RequestListResponse>("/requests/visible", { params }),
+
   get: (id: string) => api.get<RequestDetailResponse>(`/requests/${id}`),
+  getVisible: (id: string) => api.get<RequestDetailResponse>(`/requests/visible/${id}`),
 
   cancel: (id: string, reason: string) =>
     api.post<RequestDetailResponse>(`/requests/${id}/cancel`, { reason }),
@@ -669,6 +683,35 @@ export const placementAdminApi = {
     api.post<PlacementResponse>(`/admin/placements/${id}/activate`),
   deactivate: (id: string) =>
     api.post<PlacementResponse>(`/admin/placements/${id}/deactivate`),
+};
+
+/** Contract + placement hierarchy chart API. */
+export const hierarchyApi = {
+  list: (params?: { contractTypeId?: string; placementId?: string; status?: string }) =>
+    api.get<HierarchyListResponse>("/hierarchies", { params }),
+  listPlacements: (contractTypeId: string) =>
+    api.get<HierarchyPlacementsResponse>("/hierarchies/placements", {
+      params: { contractTypeId },
+    }),
+  create: (body: CreateHierarchyRequest) =>
+    api.post<HierarchyResponse>("/hierarchies", body),
+  get: (id: string) => api.get<HierarchyResponse>(`/hierarchies/${id}`),
+  eligibleUsers: (id: string, search?: string, includeAssigned = false) =>
+    api.get<HierarchyUsersResponse>(`/hierarchies/${id}/users`, {
+      params: { search: search ?? undefined, includeAssigned },
+    }),
+  addNode: (id: string, body: AddHierarchyNodeRequest) =>
+    api.post<HierarchyResponse>(`/hierarchies/${id}/nodes`, body),
+  removeNode: (id: string, nodeId: string, body: RemoveHierarchyNodeRequest) =>
+    api.delete<HierarchyResponse>(`/hierarchies/${id}/nodes/${nodeId}`, {
+      data: body,
+    }),
+  activate: (id: string, expectedVersion: number) =>
+    api.post<HierarchyResponse>(`/hierarchies/${id}/activate`, { expectedVersion }),
+  archive: (id: string, expectedVersion: number) =>
+    api.post<HierarchyResponse>(`/hierarchies/${id}/archive`, { expectedVersion }),
+  history: (id: string) =>
+    api.get<HierarchyHistoryResponse>(`/hierarchies/${id}/history`),
 };
 
 /** FR-001: Superadmin approval configuration API. */

@@ -120,6 +120,11 @@ const PERMISSION_REGISTRY = Object.freeze({
   // × level). Configuration controls who MAY approve, never hardcoded roles.
   APPROVAL: ["approval_config:manage"],
 
+  // Contract + placement hierarchy chart administration. These permissions
+  // expose the chart itself; module data visibility still requires the
+  // relevant module permission and the role's explicit data scope.
+  HIERARCHY: ["hierarchy:view", "hierarchy:manage"],
+
   // FR-007: Permission (Ijin) module — mirrors the other request modules.
   PERMISSION: [
     "permission:submit",

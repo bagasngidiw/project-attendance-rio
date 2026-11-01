@@ -25,4 +25,5 @@ export const ROUTES = {
   ADMIN_APPROVAL_HISTORY: "/admin/approval-history",
   ADMIN_APPROVAL_CONFIG: "/admin/approval-config",
   ADMIN_MASTER: "/admin/master",
+  ADMIN_HIERARCHY: "/admin/hierarchy",
 } as const;

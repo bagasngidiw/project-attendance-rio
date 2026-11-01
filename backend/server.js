@@ -51,6 +51,9 @@ const { ApprovalConfigurationRepository } = require("./src/infrastructure/reposi
 const { SicknessTypeRepository } = require("./src/infrastructure/repositories/sickness-type.repository");
 const { ContractTypeRepository } = require("./src/infrastructure/repositories/contract-type.repository");
 const { PlacementRepository } = require("./src/infrastructure/repositories/placement.repository");
+const { ContractPlacementRepository } = require("./src/infrastructure/repositories/contract-placement.repository");
+const { HierarchyRepository } = require("./src/infrastructure/repositories/hierarchy.repository");
+const { HierarchyHistoryRepository } = require("./src/infrastructure/repositories/hierarchy-history.repository");
 const { LeaveQuotaService } = require("./src/application/leave-quota.service");
 const { LeaveBalanceService } = require("./src/application/leave-balance.service");
 const { AttendanceLeaveSyncService } = require("./src/application/attendance-leave-sync.service");
@@ -94,6 +97,8 @@ const { SakitService } = require("./src/application/sakit.service");
 const { SicknessTypeService } = require("./src/application/sickness-type.service");
 const { ContractTypeService } = require("./src/application/contract-type.service");
 const { PlacementService } = require("./src/application/placement.service");
+const { HierarchyService } = require("./src/application/hierarchy.service");
+const { HierarchyScopeService } = require("./src/application/hierarchy-scope.service");
 const { BrandingService } = require("./src/application/branding.service");
 
 const { createAuthenticate, createAuthorize } = require("./src/infrastructure/middleware/auth.middleware");
@@ -137,6 +142,7 @@ const { SakitController } = require("./src/presentation/controllers/sakit.contro
 const { SicknessTypeController } = require("./src/presentation/controllers/sickness-type.controller");
 const { ContractTypeController } = require("./src/presentation/controllers/contract-type.controller");
 const { PlacementController } = require("./src/presentation/controllers/placement.controller");
+const { HierarchyController } = require("./src/presentation/controllers/hierarchy.controller");
 const { AttachmentController } = require("./src/presentation/controllers/attachment.controller");
 const { SalarySlipController } = require("./src/presentation/controllers/salary-slip.controller");
 const { createAuthRoutes } = require("./src/presentation/routes/auth.routes");
@@ -169,6 +175,7 @@ const { createPermissionRoutes } = require("./src/presentation/routes/permission
 const { createSakitRoutes, createSicknessTypeRoutes, createSicknessTypeAdminRoutes } = require("./src/presentation/routes/sakit.routes");
 const { createContractTypeRoutes, createContractTypeAdminRoutes } = require("./src/presentation/routes/contract-type.routes");
 const { createPlacementRoutes, createPlacementAdminRoutes } = require("./src/presentation/routes/placement.routes");
+const { createHierarchyRoutes } = require("./src/presentation/routes/hierarchy.routes");
 const {
   createBrandingRoutes,
   createBrandingAssetRoutes,
@@ -225,6 +232,9 @@ function buildApp(config) {
   const sicknessTypeRepository = new SicknessTypeRepository();
   const contractTypeRepository = new ContractTypeRepository();
   const placementRepository = new PlacementRepository();
+  const contractPlacementRepository = new ContractPlacementRepository();
+  const hierarchyRepository = new HierarchyRepository();
+  const hierarchyHistoryRepository = new HierarchyHistoryRepository();
   const logoStorage = new LocalDiskStorage({
     storageDir: process.env.BRANDING_ASSETS_DIR || require("path").join(process.cwd(), "branding-assets"),
   });
@@ -309,6 +319,23 @@ function buildApp(config) {
     placementRepository,
     auditService,
   });
+  const hierarchyService = new HierarchyService({
+    hierarchyRepository,
+    hierarchyHistoryRepository,
+    contractPlacementRepository,
+    contractTypeRepository,
+    placementRepository,
+    userRepository,
+    userRoleRepository,
+    roleRepository,
+    auditService,
+  });
+  const hierarchyScopeService = new HierarchyScopeService({
+    hierarchyService,
+    userRepository,
+    userRoleRepository,
+    roleRepository,
+  });
   const routingService = new RoutingService({
     routingRuleRepository,
     userRepository,
@@ -339,6 +366,7 @@ function buildApp(config) {
     cutoffRuleRepository,
     escalationService: null, // wired below after EscalationService construction
     userRepository,
+    hierarchyService,
   });
   const delegationService = new DelegationService({
     delegationRepository,
@@ -365,7 +393,11 @@ function buildApp(config) {
     userRepository,
     auditService,
   });
-  const approvalTargetService = new ApprovalTargetService({ approvalConfigurationService, userRepository });
+  const approvalTargetService = new ApprovalTargetService({
+    approvalConfigurationService,
+    userRepository,
+    hierarchyService,
+  });
   const approvalEngine = new ApprovalEngineService({
     approvalConfigurationService,
     requestService,
@@ -376,6 +408,7 @@ function buildApp(config) {
     userRoleRepository,
     auditService,
     eventBus,
+    hierarchyService,
   });
   const leaveBalanceRepository = new LeaveBalanceRepository();
   // Authoritative leave-balance engine: reserve on submit, consume on approve,
@@ -474,6 +507,7 @@ function buildApp(config) {
     eventBus,
     leaveTypeRepository,
     leaveBalanceService,
+    hierarchyService,
   });
   const leaveQuotaService = new LeaveQuotaService({
     userRepository,
@@ -484,6 +518,7 @@ function buildApp(config) {
     registry: reportProviderRegistry,
     userRepository,
     auditService,
+    hierarchyScopeService,
     reverseGeocoder: createReverseGeocoder({
       config: config.geocoding,
       cacheRepository: locationGeocodeRepository,
@@ -561,7 +596,12 @@ function buildApp(config) {
   const auditController = new AuditController({ auditService });
   const managerTeamController = new ManagerTeamController({ managerTeamService });
   const platformController = new PlatformController({ passwordService });
-  const requestController = new RequestController({ requestService, approvalService, approvalEngine });
+  const requestController = new RequestController({
+    requestService,
+    approvalService,
+    approvalEngine,
+    hierarchyScopeService,
+  });
   const leaveController = new LeaveController({ leaveService, leaveBalanceService });
   const overtimeController = new OvertimeController({ overtimeService });
   const tripController = new TripController({ tripService });
@@ -570,6 +610,7 @@ function buildApp(config) {
   const sicknessTypeController = new SicknessTypeController({ sicknessTypeService });
   const contractTypeController = new ContractTypeController({ contractTypeService });
   const placementController = new PlacementController({ placementService });
+  const hierarchyController = new HierarchyController({ hierarchyService });
   const approvalConfigurationController = new ApprovalConfigurationController({ approvalConfigurationService });
   const approvalTargetController = new ApprovalTargetController({ approvalTargetService });
   const brandingController = new BrandingController({ brandingService });
@@ -579,9 +620,14 @@ function buildApp(config) {
     storageDir:
       process.env.ATTENDANCE_MEDIA_DIR || require("path").join(process.cwd(), "attendance-media"),
   });
-  const attendanceController = new AttendanceController({ attendanceService, mediaStorage: attendanceMediaStorage, auditService });
+  const attendanceController = new AttendanceController({
+    attendanceService,
+    mediaStorage: attendanceMediaStorage,
+    auditService,
+    hierarchyScopeService,
+  });
   const reportController = new ReportController({ reportService });
-  const dashboardController = new DashboardController({ dashboardService });
+  const dashboardController = new DashboardController({ dashboardService, hierarchyScopeService });
   const profileController = new ProfileController({ profileService });
   const orgController = new OrgController({ orgService });
   const reportingController = new ReportingController({ reportingLineService });
@@ -616,7 +662,35 @@ function buildApp(config) {
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With'],
 };
-app.use(cors(corsOptions));
+// FR-CORS-PUBLIC: path-aware CORS selector. Public, pre-login endpoints
+// (health + branding bootstrap + branding assets) are readable from ANY
+// origin so a stale/misconfigured allow-list can never break page load.
+// They expose only public, non-sensitive data and never use credentials.
+// Every other endpoint (all authenticated APIs) keeps the strict allow-list
+// + credentials policy. Preflight (OPTIONS) is handled by the cors middleware.
+const PUBLIC_CORS_PATHS = [
+  "/health",
+  "/api/v1/platform/branding",
+  "/api/v1/platform/branding-assets",
+];
+function isPublicCorsPath(pathname) {
+  return PUBLIC_CORS_PATHS.some(
+    (p) => pathname === p || pathname.startsWith(p + "/")
+  );
+}
+const privateCors = cors(corsOptions);
+const publicCors = cors({
+  origin: "*",
+  credentials: false,
+  methods: ["GET", "OPTIONS"],
+  allowedHeaders: ["Content-Type", "Authorization", "X-Requested-With"],
+});
+app.use((req, res, next) => {
+  if (isPublicCorsPath(req.path)) {
+    return publicCors(req, res, next);
+  }
+  return privateCors(req, res, next);
+});
 // app.options('/(.*)', cors(corsOptions));
 // app.options('*', cors(corsOptions));
   // app.use(
@@ -780,6 +854,7 @@ const salaryAssetsDir = config.salaryAssetsDir || path.join(__dirname, "salary-a
   app.use("/api/v1/admin/contract-types", createContractTypeAdminRoutes({ contractTypeController, authenticate, authorize }));
   app.use("/api/v1/placements", createPlacementRoutes({ placementController, authenticate, authorize }));
   app.use("/api/v1/admin/placements", createPlacementAdminRoutes({ placementController, authenticate, authorize }));
+  app.use("/api/v1/hierarchies", createHierarchyRoutes({ hierarchyController, authenticate, authorize }));
   app.use("/api/v1/admin", createRoutingAdminRoutes({ routingAdminController, authenticate, authorize }));
   app.use("/api/v1/attendance", createAttendanceRoutes({ attendanceController, authenticate, authorize }));
   app.use("/api/v1/reports", createReportRoutes({ reportController, authenticate, authorize }));
@@ -810,6 +885,9 @@ const salaryAssetsDir = config.salaryAssetsDir || path.join(__dirname, "salary-a
       contractTypeRepository,
       placementRepository,
       approvalConfigurationRepository,
+      hierarchyRepository,
+      hierarchyHistoryRepository,
+      contractPlacementRepository,
       locationGeocodeRepository,
       salarySlipRepository,
     },

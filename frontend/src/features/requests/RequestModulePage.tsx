@@ -15,6 +15,7 @@ import { requestApi } from "@/lib/axios";
 import { apiErrorMessage } from "@/lib/apiError";
 import { toast } from "@/lib/toast";
 import { Can } from "@/features/auth/Can";
+import { usePermission } from "@/features/auth/usePermission";
 import { Spinner } from "@/components/ui/Spinner";
 import { Button } from "@/components/ui/Button";
 
@@ -30,18 +31,23 @@ export function RequestModulePage({
   title,
   description,
   submitPermission,
+  viewPermission,
   submit,
 }: {
   type: RequestType;
   title: string;
   description: string;
   submitPermission: PermissionKey;
+  viewPermission: PermissionKey;
   submit: (
     input: LeaveInput | OvertimeInput | TripInput,
     approvalTarget: ApprovalTargetValue | null
   ) => Promise<string | null>;
 }) {
   const [status, setStatus] = useState("");
+  const { hasPermission } = usePermission();
+  const canViewSubordinates = hasPermission(viewPermission);
+  const [scope, setScope] = useState<"mine" | "visible">(canViewSubordinates ? "visible" : "mine");
   const [page, setPage] = useState(1);
   const [detailId, setDetailId] = useState<string | null>(null);
   const [cancelling, setCancelling] = useState<RequestDto | null>(null);
@@ -49,8 +55,8 @@ export function RequestModulePage({
   const params = { type, status: status || undefined, page, pageSize: PAGE_SIZE };
 
   const { data, isLoading, isError, refetch } = useQuery({
-    queryKey: ["my-requests", params],
-    queryFn: () => requestApi.mine(params).then((r) => r.data.data),
+    queryKey: [scope === "visible" ? "visible-requests" : "my-requests", params],
+    queryFn: () => (scope === "visible" ? requestApi.visible(params) : requestApi.mine(params)).then((r) => r.data.data),
   });
 
   const items = data?.items ?? [];
@@ -97,6 +103,16 @@ export function RequestModulePage({
 
         <div className="space-y-4">
           <div className="flex flex-wrap items-end gap-3 rounded-xl border border-slate-200 bg-[var(--brand-surface)] p-4">
+            {canViewSubordinates ? (
+              <div className="flex w-full gap-2 sm:w-auto">
+                <Button size="sm" variant={scope === "visible" ? "primary" : "secondary"} onClick={() => { setScope("visible"); setPage(1); }}>
+                  Data Hirarki
+                </Button>
+                <Button size="sm" variant={scope === "mine" ? "primary" : "secondary"} onClick={() => { setScope("mine"); setPage(1); }}>
+                  Permintaan Saya
+                </Button>
+              </div>
+            ) : null}
             <div className="w-full sm:w-44">
               <label className="mb-1.5 block text-sm font-medium text-slate-700">
                 Status
@@ -206,7 +222,7 @@ export function RequestModulePage({
       </div>
 
       {detailId ? (
-        <RequestDetailDialog requestId={detailId} onClose={() => setDetailId(null)} />
+        <RequestDetailDialog requestId={detailId} visible={scope === "visible"} onClose={() => setDetailId(null)} />
       ) : null}
       {cancelling ? (
         <CancelConfirmDialog

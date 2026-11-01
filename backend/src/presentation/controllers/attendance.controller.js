@@ -12,10 +12,11 @@ const MAX_MEDIA_BYTES = 2 * 1024 * 1024; // 2 MB
 const ALLOWED_MEDIA_TYPES = new Set(["image/png", "image/jpeg"]);
 
 class AttendanceController {
-  constructor({ attendanceService, mediaStorage = null, auditService = null }) {
+  constructor({ attendanceService, mediaStorage = null, auditService = null, hierarchyScopeService = null }) {
     this.attendanceService = attendanceService;
     this.mediaStorage = mediaStorage;
     this.auditService = auditService;
+    this.hierarchyScopeService = hierarchyScopeService;
   }
 
   /** POST /attendance/clock-in */
@@ -148,6 +149,9 @@ class AttendanceController {
     try {
       const data = await this.attendanceService.getByIdScoped(req.params.id, req.auth.userId, {
         canViewAll: this.canViewAll(req),
+        visibleUserIds: this.hierarchyScopeService
+          ? await this.hierarchyScopeService.resolveVisibleUserIds(this.actor(req))
+          : null,
       });
       res.status(200).json({ data });
     } catch (err) {
@@ -162,6 +166,9 @@ class AttendanceController {
       const data = await this.attendanceService.listOverview({
         actorId: req.auth.userId,
         canViewAll: this.canViewAll(req),
+        visibleUserIds: this.hierarchyScopeService
+          ? await this.hierarchyScopeService.resolveVisibleUserIds(this.actor(req))
+          : null,
         filters,
       });
       res.status(200).json({ data });

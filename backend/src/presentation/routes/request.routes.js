@@ -36,6 +36,13 @@ const APPROVE_KEYS = [
   "sakit:approve",
 ];
 const VIEW_OR_APPROVE_KEYS = [...VIEW_OWN_KEYS, ...APPROVE_KEYS];
+const VIEW_VISIBLE_KEYS = [
+  "leave:view_all",
+  "overtime:view_all",
+  "trip:view_all",
+  "permission:view_all",
+  "sakit:view_all",
+];
 
 function createRequestRoutes({ requestController, authenticate, authorize }) {
   const router = Router();
@@ -43,6 +50,8 @@ function createRequestRoutes({ requestController, authenticate, authorize }) {
   router.use(authenticate);
 
   router.get("/mine", requestController.mine);
+  router.get("/visible", authorize(...VIEW_VISIBLE_KEYS), requestController.visible);
+  router.get("/visible/:id", authorize(...VIEW_VISIBLE_KEYS), requestController.visibleDetail);
   router.get("/:id", authorize(...VIEW_OWN_KEYS), requestController.getById);
   router.get(
     "/:id/history",

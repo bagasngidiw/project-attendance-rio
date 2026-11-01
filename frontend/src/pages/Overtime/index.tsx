@@ -11,6 +11,7 @@ export default function Overtime() {
       title="Lembur"
       description="Ajukan permintaan lembur dan pantau statusnya."
       submitPermission={PERMISSIONS.OVERTIME_SUBMIT}
+      viewPermission={PERMISSIONS.OVERTIME_VIEW_ALL}
       submit={async (
         input,
         approvalTarget: ApprovalTargetValue | null

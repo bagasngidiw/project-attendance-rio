@@ -54,6 +54,7 @@ class ApprovalEngineService {
     userRoleRepository,
     auditService,
     eventBus,
+    hierarchyService = null,
   }) {
     this.approvalConfigurationService = approvalConfigurationService;
     this.requestService = requestService;
@@ -64,6 +65,7 @@ class ApprovalEngineService {
     this.userRoleRepository = userRoleRepository;
     this.auditService = auditService;
     this.eventBus = eventBus;
+    this.hierarchyService = hierarchyService;
   }
 
   /* -------------------------------------------------------------------------
@@ -86,6 +88,17 @@ class ApprovalEngineService {
   async validateTarget(requestType, target = {}, { requesterId = null } = {}) {
     assertTargetShape(target);
     const contractTypeId = await this.resolveRequesterContract(requesterId);
+    const hierarchy = this.hierarchyService && requesterId
+      ? await this.hierarchyService.getAncestorUsers(requesterId)
+      : null;
+    const ancestorIds = new Set((hierarchy?.ancestors ?? []).map((user) => String(user.userId)));
+
+    if (hierarchy?.requesterScoped && !hierarchy.chart) {
+      throw new ValidationError(
+        "Requester belum memiliki bagan hirarki aktif. Perbaiki bagan hirarki terlebih dahulu.",
+        { field: "approvalTarget" }
+      );
+    }
 
     if (target.targetType === APPROVAL_TARGET_TYPES.ROLE) {
       const role = await this.roleRepository.assertExists(target.targetRoleId);
@@ -108,7 +121,16 @@ class ApprovalEngineService {
         target.targetRoleId,
         { contractTypeId }
       );
-      if (users.length === 0) {
+      const hierarchyUsers = hierarchy?.chart
+        ? users.filter((user) => ancestorIds.has(String(user.userId)))
+        : users;
+      if (hierarchy?.chart && hierarchyUsers.length === 0) {
+        throw new ValidationError(
+          "Tidak ada approver yang eligible pada hirarki requester. Perbaiki bagan hirarki terlebih dahulu.",
+          { field: "approvalTarget.targetRoleId" }
+        );
+      }
+      if (!hierarchy?.chart && users.length === 0) {
         throw new ValidationError(
           "The selected role has no eligible approvers available.",
           { field: "approvalTarget.targetRoleId" }
@@ -143,6 +165,12 @@ class ApprovalEngineService {
         { field: "approvalTarget.targetUserId" }
       );
     }
+    if (hierarchy?.chart && !ancestorIds.has(String(target.targetUserId))) {
+      throw new ValidationError(
+        "Approver harus merupakan user yang berada di atas requester pada bagan hirarki.",
+        { field: "approvalTarget.targetUserId" }
+      );
+    }
     return {
       targetType: APPROVAL_TARGET_TYPES.USER,
       targetRoleId: null,
@@ -170,10 +198,19 @@ class ApprovalEngineService {
    * User-targets assign directly; role-targets stay claimable (assignedUserId
    * null) until an eligible approver claims them.
    *
-   * @param {{ requestType: string, target: object, requesterId?: string|null }} input
+   * @param {{ requestType: string, target: object, requesterId?: string|null, explicitTarget?: boolean }} input
    */
-  async buildAssignment({ requestType, target, requesterId = null }) {
+  async buildAssignment({ requestType, target, requesterId = null, explicitTarget = true }) {
     const validated = await this.validateTarget(requestType, target, { requesterId });
+    const hierarchy = this.hierarchyService && requesterId
+      ? await this.hierarchyService.getAncestorUsers(requesterId)
+      : null;
+    const hierarchyContext = hierarchy?.chart ? hierarchy : null;
+    const eligibleForSnapshot = hierarchyContext
+      ? (await this.approvalConfigurationService.getEligibleUsers(requestType, null, {
+        contractTypeId: await this.resolveRequesterContract(requesterId),
+      })).filter((user) => hierarchyContext.ancestors.some((ancestor) => String(ancestor.userId) === String(user.userId)))
+      : [];
     const snapshot = this.approvalConfigurationService.buildSnapshot({
       requestType,
       targetType: validated.targetType,
@@ -182,6 +219,12 @@ class ApprovalEngineService {
       targetRoleLevel: validated.targetRoleLevel,
       targetUserId: validated.targetUserId,
       targetUserName: validated.targetUserName,
+      hierarchyId: hierarchyContext?.chart?.id ?? null,
+      hierarchyVersion: hierarchyContext?.chart?.version ?? null,
+      requesterNodeId: hierarchyContext?.requesterNode?.nodeId ?? null,
+      ancestorChain: hierarchyContext?.ancestors ?? [],
+      eligibleApproverIds: eligibleForSnapshot.map((user) => String(user.userId)),
+      explicitTarget,
     });
     const assignedUserId =
       validated.targetType === APPROVAL_TARGET_TYPES.USER ? validated.targetUserId : null;
@@ -208,6 +251,17 @@ class ApprovalEngineService {
    * @returns {Promise<{ targetType: string, targetRoleId: string } | null>}
    */
   async resolveDefaultTarget(requestType, requesterId = null) {
+    if (this.hierarchyService && requesterId) {
+      const hierarchy = await this.hierarchyService.getAncestorUsers(requesterId);
+      if (hierarchy.chart) {
+        const contractTypeId = await this.resolveRequesterContract(requesterId);
+        const eligible = await this.approvalConfigurationService.getEligibleUsers(requestType, null, { contractTypeId });
+        const first = hierarchy.ancestors.find((ancestor) => eligible.some((user) => String(user.userId) === String(ancestor.userId)));
+        if (!first) return null;
+        return { targetType: APPROVAL_TARGET_TYPES.USER, targetUserId: String(first.userId) };
+      }
+      if (hierarchy.requesterScoped && !hierarchy.chart) return null;
+    }
     const contractTypeId = await this.resolveRequesterContract(requesterId);
     const eligibleRoles = await this.approvalConfigurationService.getEligibleRoles(requestType);
     const targetable = eligibleRoles
@@ -242,11 +296,22 @@ class ApprovalEngineService {
    */
   async prepareSubmission({ requestType, input, requesterId = null }) {
     if (input?.approvalTarget) {
-      return this.buildAssignment({ requestType, target: input.approvalTarget, requesterId });
+      return this.buildAssignment({ requestType, target: input.approvalTarget, requesterId, explicitTarget: true });
     }
     const defaultTarget = await this.resolveDefaultTarget(requestType, requesterId);
     if (defaultTarget) {
-      return this.buildAssignment({ requestType, target: defaultTarget, requesterId });
+      return this.buildAssignment({ requestType, target: defaultTarget, requesterId, explicitTarget: false });
+    }
+    if (this.hierarchyService && requesterId) {
+      const hierarchy = await this.hierarchyService.getAncestorUsers(requesterId);
+      if (hierarchy.chart || hierarchy.requesterScoped) {
+        throw new ValidationError(
+          hierarchy.chart
+            ? "Tidak ada approver yang eligible pada bagan hirarki. Perbaiki bagan hirarki terlebih dahulu."
+            : "Requester belum memiliki bagan hirarki aktif. Perbaiki bagan hirarki terlebih dahulu.",
+          { field: "approvalTarget" }
+        );
+      }
     }
     return null;
   }
@@ -318,10 +383,18 @@ class ApprovalEngineService {
     const contractTypeId = await this.resolveRequesterContract(request.requesterId);
     const eligibleUsers = await this.approvalConfigurationService.getEligibleUsers(
       request.type,
-      null,
+      request.approval?.configurationSnapshot?.explicitTarget === true
+        ? request.approval?.targetRoleId ?? null
+        : null,
       { contractTypeId }
     );
-    if (!eligibleUsers.some((u) => String(u.userId) === String(userId))) {
+    const hierarchy = this.hierarchyService
+      ? await this.hierarchyService.getAncestorUsers(request.requesterId)
+      : null;
+    const hierarchyEligible = hierarchy?.chart
+      ? eligibleUsers.filter((user) => hierarchy.ancestors.some((ancestor) => String(ancestor.userId) === String(user.userId)))
+      : eligibleUsers;
+    if (!hierarchyEligible.some((u) => String(u.userId) === String(userId))) {
       throw new PermissionDeniedError(`${request.type.toLowerCase()}:approve`);
     }
     // No self-approval unless configured.
@@ -387,6 +460,13 @@ class ApprovalEngineService {
       (actor.actorRoleKeys ?? []).includes("SUPER_ADMIN");
     if (!isAssigned && !isAdminOverride) {
       throw new NotFoundError("Request not found.", "REQUEST_NOT_FOUND");
+    }
+
+    if (!isAdminOverride && this.hierarchyService) {
+      const hierarchy = await this.hierarchyService.getAncestorUsers(request.requesterId);
+      if (hierarchy.chart && !hierarchy.ancestors.some((user) => String(user.userId) === String(actor.actorId))) {
+        throw new NotFoundError("Request not found.", "REQUEST_NOT_FOUND");
+      }
     }
 
     // Permission for the request's type (defense in depth behind the route).

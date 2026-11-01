@@ -59,6 +59,7 @@ class ApprovalService {
     calendarService,
     escalationService,
     userRepository,
+    hierarchyService = null,
   }) {
     this.requestService = requestService;
     this.requestRepository = requestRepository;
@@ -71,6 +72,7 @@ class ApprovalService {
     this.calendarService = calendarService ?? null;
     this.escalationService = escalationService ?? null;
     this.userRepository = userRepository ?? null;
+    this.hierarchyService = hierarchyService;
   }
 
   /**
@@ -123,27 +125,40 @@ class ApprovalService {
    */
   async listUnified(actor = {}, filters = {}) {
     const delegatedIds = await this.resolveDelegatedApproverIds(actor.actorId);
-    const seesAll =
+    const approverIds = [actor.actorId, ...delegatedIds].filter(Boolean);
+    // Approval visibility is assignment/eligibility based. Module view_all
+    // permissions do not turn the inbox into a company-wide pending queue.
+    const approvalVisibility = [
+      { approverId: { $in: approverIds } },
+      {
+        "approval.targetType": "ROLE",
+        "approval.assignedUserId": null,
+        "approval.configurationSnapshot.eligibleApproverIds": actor.actorId,
+      },
+    ];
+    const seesAllLegacy =
       (actor.actorPermissions ?? []).includes("*") ||
       ["leave", "trip", "overtime", "permission", "sakit"].some((t) =>
         hasPermission(actor.actorPermissions ?? [], `${t}:view_all`)
       );
+    if (seesAllLegacy) {
+      // Historical requests created before hierarchy snapshots existed remain
+      // visible to the legacy administrative view. New submissions always have
+      // a snapshot and must satisfy the assignment/ancestor rules above.
+      approvalVisibility.push({ "approval.configurationSnapshot": null });
+    }
 
-    const approverFilter = seesAll
-      ? undefined
-      : { $in: [actor.actorId, ...delegatedIds] };
-
+    const visibilityExtra = filters.employeeId
+      ? { $and: [{ $or: approvalVisibility }, { requesterId: filters.employeeId }] }
+      : { $or: approvalVisibility };
     const { items, total } = await this.requestRepository.findWithFilters({
-      approverId: approverFilter,
+      extra: visibilityExtra,
       status: filters.status ?? REQUEST_STATUS.PENDING,
       type: filters.type ? filters.type.toUpperCase() : undefined,
       from: filters.from,
       to: filters.to,
       page: filters.page ?? 1,
       pageSize: filters.pageSize ?? 20,
-      extra: filters.employeeId
-        ? { requesterId: filters.employeeId }
-        : undefined,
     });
 
     const enriched = await Promise.all(
@@ -252,7 +267,10 @@ class ApprovalService {
       request.status === REQUEST_STATUS.PENDING &&
       request.approval?.targetType === "ROLE" &&
       !request.approval?.assignedUserId &&
-      hasPermission(actor.actorPermissions ?? [], `${request.type.toLowerCase()}:approve`);
+      hasPermission(actor.actorPermissions ?? [], `${request.type.toLowerCase()}:approve`) &&
+      (request.approval?.configurationSnapshot?.eligibleApproverIds ?? []).some(
+        (id) => String(id) === String(actor.actorId)
+      );
 
     let isEffectiveDelegate = false;
     if (this.delegationService && !isApprover) {

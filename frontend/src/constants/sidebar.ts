@@ -18,6 +18,7 @@ import {
   Stethoscope,
   Database,
   ReceiptText,
+  Network,
 } from "lucide-react";
 
 import { PERMISSIONS } from "@contracts/permissions";
@@ -227,6 +228,12 @@ export const MENU: SidebarItem[] = [
         path: "/admin/master",
         icon: Database,
         permissions: [PERMISSIONS.PLATFORM_SETTINGS],
+      },
+      {
+        title: "Hirarki",
+        path: "/admin/hierarchy",
+        icon: Network,
+        permissions: [PERMISSIONS.HIERARCHY_VIEW, PERMISSIONS.HIERARCHY_MANAGE],
       },
     ],
   },

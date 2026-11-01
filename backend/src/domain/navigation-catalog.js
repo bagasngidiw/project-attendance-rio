@@ -281,6 +281,15 @@ const NAVIGATION_CATALOG = Object.freeze([
         anyOf: ["platform:settings"],
         children: [],
       },
+      {
+        id: "nav.hierarchy",
+        module: "HIERARCHY",
+        label: "Hirarki",
+        path: "/admin/hierarchy",
+        icon: "network",
+        anyOf: ["hierarchy:view", "hierarchy:manage"],
+        children: [],
+      },
     ],
   },
 
