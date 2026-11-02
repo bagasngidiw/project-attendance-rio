@@ -5,6 +5,15 @@
 const { UserModel, USER_STATUS } = require("../models/user.model");
 const { NotFoundError, ConflictError } = require("../../domain/errors");
 
+/**
+ * Escapes user-supplied text before it is embedded in a MongoDB regex, so
+ * characters like `.`, `*`, `(` etc. are matched literally instead of being
+ * interpreted as regex syntax.
+ */
+function escapeRegex(value) {
+  return String(value).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
 class UserRepository {
   async findByUsername(username) {
     return UserModel.findOne({ username: username.trim().toLowerCase() });
@@ -214,7 +223,18 @@ class UserRepository {
 
     const filter = {};
     if (search && search.trim()) {
-      filter.$text = { $search: search.trim() };
+      // Partial, case-insensitive matching across every identity field the
+      // admin console exposes. A `$text` index only matches whole words, so
+      // typing "bud" never found "Budi" (and words < 3 chars were ignored).
+      // Regex matching makes newly created accounts searchable by any
+      // fragment of name, username, email, or NIP.
+      const pattern = new RegExp(escapeRegex(search.trim()), "i");
+      filter.$or = [
+        { name: pattern },
+        { username: pattern },
+        { email: pattern },
+        { nip: pattern },
+      ];
     }
     if (status) filter.status = status;
     if (departmentIds) filter.departmentId = { $in: departmentIds };

@@ -14,7 +14,7 @@ const userSchema = new mongoose.Schema(
   {
     username: { type: String, required: true, unique: true, trim: true },
     email: { type: String, required: true, unique: true, trim: true, lowercase: true },
-    name: { type: String, required: true, trim: true },
+    name: { type: String, required: true, trim: true, index: true },
     status: {
       type: String,
       enum: Object.values(USER_STATUS),
@@ -46,7 +46,7 @@ const userSchema = new mongoose.Schema(
     },
     // NIP + master-data relations (Kontrak / Penempatan) — ObjectId refs that
     // are populated into display names by UserAdminService.
-    nip: { type: String, default: "", trim: true },
+    nip: { type: String, default: "", trim: true, index: true },
     contractTypeId: { type: mongoose.Schema.Types.ObjectId, ref: "ContractType", default: null, index: true },
     placementId: { type: mongoose.Schema.Types.ObjectId, ref: "Placement", default: null, index: true },
     // Denormalized mirror of the user_roles join (design §7.5): the user
@@ -93,8 +93,9 @@ const userSchema = new mongoose.Schema(
   }
 );
 
-// Text index for admin search (FR-029/FR-023): name + username + email.
-userSchema.index({ name: "text", username: "text", email: "text" });
+// Admin search (FR-029/FR-023) uses a case-insensitive regex across
+// name/username/email/nip so partial fragments match newly created accounts.
+// The legacy `$text` index was removed because it only matched whole words.
 
 const UserModel = mongoose.model("User", userSchema);
 

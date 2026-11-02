@@ -1,5 +1,5 @@
 import { useMemo, useState } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Network, Plus, Save, Trash2 } from "lucide-react";
 
 import type {
@@ -14,7 +14,7 @@ import { Input } from "@/components/ui/Input";
 import { Modal } from "@/components/ui/Modal";
 import { Spinner } from "@/components/ui/Spinner";
 import { apiErrorMessage } from "@/lib/apiError";
-import { hierarchyApi, contractTypeApi } from "@/lib/axios";
+import { hierarchyApi, contractTypeApi, placementApi } from "@/lib/axios";
 import { toast } from "@/lib/toast";
 
 type InsertAction = {
@@ -30,6 +30,9 @@ export default function HierarchyPage() {
   const [insertAction, setInsertAction] = useState<InsertAction | null>(null);
   const [deleteNode, setDeleteNode] = useState<HierarchyNodeDto | null>(null);
   const [saving, setSaving] = useState(false);
+  const [listStatus, setListStatus] = useState("");
+  const [busyChartId, setBusyChartId] = useState<string | null>(null);
+  const queryClient = useQueryClient();
 
   const contractsQuery = useQuery({
     queryKey: ["hierarchy-contracts"],
@@ -61,6 +64,73 @@ export default function HierarchyPage() {
     [chartUsersQuery.data]
   );
 
+  // -------------------------------------------------------------------------
+  // Hierarchy list (track every chart that has been created)
+  // -------------------------------------------------------------------------
+  const hierarchyListQuery = useQuery({
+    queryKey: ["hierarchy-list", listStatus],
+    queryFn: () =>
+      hierarchyApi
+        .list(listStatus ? { status: listStatus } : undefined)
+        .then((response) => response.data.data ?? []),
+  });
+
+  // Placement names for the table. `/placements` returns ACTIVE placements;
+  // archived placements fall back to a short id in the cell.
+  const allPlacementsQuery = useQuery({
+    queryKey: ["hierarchy-all-placements"],
+    queryFn: () => placementApi.list().then((response) => response.data.data ?? []),
+  });
+
+  const contractNames = useMemo(
+    () => new Map((contractsQuery.data ?? []).map((item) => [item.id, item.name])),
+    [contractsQuery.data]
+  );
+  const placementNames = useMemo(
+    () => new Map((allPlacementsQuery.data ?? []).map((item) => [item.id, item.name])),
+    [allPlacementsQuery.data]
+  );
+
+  async function refreshHierarchyList() {
+    await queryClient.invalidateQueries({ queryKey: ["hierarchy-list"] });
+  }
+
+  function openChartFromList(item: HierarchyDto) {
+    setContractTypeId(item.contractTypeId);
+    setPlacementId(item.placementId);
+    setChart(item);
+  }
+
+  async function activateFromList(item: HierarchyDto) {
+    setBusyChartId(item.id);
+    try {
+      const response = await hierarchyApi.activate(item.id, item.version);
+      const updated = response.data.data ?? item;
+      if (chart?.id === item.id) setChart(updated);
+      toast.success("Bagan hirarki diaktifkan.");
+      await refreshHierarchyList();
+    } catch (error) {
+      toast.error(apiErrorMessage(error) ?? "Gagal mengaktifkan bagan.");
+    } finally {
+      setBusyChartId(null);
+    }
+  }
+
+  async function archiveFromList(item: HierarchyDto) {
+    setBusyChartId(item.id);
+    try {
+      const response = await hierarchyApi.archive(item.id, item.version);
+      const updated = response.data.data ?? item;
+      if (chart?.id === item.id) setChart(updated);
+      toast.success("Bagan hirarki diarsipkan.");
+      await refreshHierarchyList();
+    } catch (error) {
+      toast.error(apiErrorMessage(error) ?? "Gagal mengarsipkan bagan.");
+    } finally {
+      setBusyChartId(null);
+    }
+  }
+
   async function createOrLoadChart() {
     if (!contractTypeId || !placementId) return;
     setLoadingChart(true);
@@ -68,6 +138,7 @@ export default function HierarchyPage() {
       const response = await hierarchyApi.create({ contractTypeId, placementId });
       setChart(response.data.data ?? null);
       toast.success("Bagan hirarki siap digunakan.");
+      void refreshHierarchyList();
     } catch (error) {
       toast.error(apiErrorMessage(error) ?? "Gagal membuat bagan hirarki.");
     } finally {
@@ -88,6 +159,7 @@ export default function HierarchyPage() {
       setChart(response.data.data ?? chart);
       setInsertAction(null);
       toast.success("User ditambahkan ke bagan.");
+      void refreshHierarchyList();
     } catch (error) {
       toast.error(apiErrorMessage(error) ?? "Gagal menambahkan user ke bagan.");
     } finally {
@@ -106,6 +178,7 @@ export default function HierarchyPage() {
       setChart(response.data.data ?? chart);
       setDeleteNode(null);
       toast.success("Node dihapus dari bagan.");
+      void refreshHierarchyList();
     } catch (error) {
       toast.error(apiErrorMessage(error) ?? "Gagal menghapus node.");
     } finally {
@@ -120,6 +193,7 @@ export default function HierarchyPage() {
       const response = await hierarchyApi.activate(chart.id, chart.version);
       setChart(response.data.data ?? chart);
       toast.success("Bagan hirarki diaktifkan.");
+      void refreshHierarchyList();
     } catch (error) {
       toast.error(apiErrorMessage(error) ?? "Gagal mengaktifkan bagan.");
     } finally {
@@ -144,6 +218,125 @@ export default function HierarchyPage() {
           Susun hubungan atasan dan bawahan berdasarkan kontrak serta penempatan.
         </p>
       </header>
+
+      {/* ------------------------------------------------------------------ */}
+      {/* Daftar bagan: track every hierarchy chart that has been created.    */}
+      {/* ------------------------------------------------------------------ */}
+      <section className="rounded-xl border border-slate-200 bg-[var(--brand-surface)] p-4 sm:p-6">
+        <div className="mb-4 flex flex-wrap items-end justify-between gap-3">
+          <div>
+            <h3 className="font-semibold">Daftar Bagan Hirarki</h3>
+            <p className="mt-1 text-xs text-slate-500">
+              Semua bagan yang pernah dibuat, beserta status dan versinya.
+            </p>
+          </div>
+          <label className="block text-sm font-medium text-slate-700">
+            Status
+            <select
+              value={listStatus}
+              onChange={(event) => setListStatus(event.target.value)}
+              className="mt-1 h-10 w-44 rounded-lg border border-slate-200 bg-white px-3 text-sm focus:border-slate-900 focus:outline-none"
+            >
+              <option value="">Semua status</option>
+              <option value="DRAFT">Draft</option>
+              <option value="ACTIVE">Aktif</option>
+              <option value="ARCHIVED">Diarsipkan</option>
+            </select>
+          </label>
+        </div>
+
+        {hierarchyListQuery.isLoading ? (
+          <Spinner label="Memuat daftar bagan..." className="py-6" />
+        ) : hierarchyListQuery.isError ? (
+          <p className="rounded-lg bg-red-50 p-3 text-sm text-red-700">
+            Gagal memuat daftar bagan hirarki.
+          </p>
+        ) : (hierarchyListQuery.data ?? []).length === 0 ? (
+          <p className="rounded-lg bg-slate-50 p-4 text-sm text-slate-500">
+            Belum ada bagan hirarki. Buat bagan pertama dengan memilih kontrak dan
+            penempatan di bawah.
+          </p>
+        ) : (
+          <div className="table-scroll overflow-x-auto rounded-lg border border-slate-200">
+            <table className="w-full text-sm">
+              <thead className="bg-slate-50 text-left text-xs uppercase text-slate-500">
+                <tr>
+                  <th className="px-4 py-3">Kontrak</th>
+                  <th className="px-4 py-3">Penempatan</th>
+                  <th className="px-4 py-3">Status</th>
+                  <th className="px-4 py-3">Node</th>
+                  <th className="px-4 py-3">Versi</th>
+                  <th className="px-4 py-3">Diperbarui</th>
+                  <th className="px-4 py-3 text-right">Aksi</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-100">
+                {(hierarchyListQuery.data ?? []).map((item) => {
+                  const busy = busyChartId === item.id;
+                  const isOpen = chart?.id === item.id;
+                  return (
+                    <tr
+                      key={item.id}
+                      className={isOpen ? "bg-slate-50" : "hover:bg-slate-50"}
+                    >
+                      <td className="px-4 py-3 text-xs font-medium text-slate-700">
+                        {contractNames.get(item.contractTypeId) ?? shortIdentifier(item.contractTypeId)}
+                      </td>
+                      <td className="px-4 py-3 text-xs text-slate-600">
+                        {placementNames.get(item.placementId) ?? shortIdentifier(item.placementId)}
+                      </td>
+                      <td className="px-4 py-3">
+                        <HierarchyStatusBadge status={item.status} />
+                      </td>
+                      <td className="px-4 py-3 text-xs text-slate-600">
+                        {item.nodes.length}
+                      </td>
+                      <td className="px-4 py-3 text-xs text-slate-600">
+                        {item.version}
+                      </td>
+                      <td className="whitespace-nowrap px-4 py-3 text-xs text-slate-500">
+                        {formatUpdatedAt(item.updatedAt)}
+                      </td>
+                      <td className="px-4 py-3 text-right">
+                        <div className="flex items-center justify-end gap-1.5">
+                          <Button
+                            size="sm"
+                            variant="secondary"
+                            onClick={() => openChartFromList(item)}
+                          >
+                            Buka
+                          </Button>
+                          {item.status === "DRAFT" ? (
+                            <Button
+                              size="sm"
+                              loading={busy}
+                              disabled={busy || item.nodes.length === 0}
+                              onClick={() => activateFromList(item)}
+                            >
+                              Aktifkan
+                            </Button>
+                          ) : null}
+                          {item.status === "ACTIVE" ? (
+                            <Button
+                              size="sm"
+                              variant="secondary"
+                              loading={busy}
+                              disabled={busy}
+                              onClick={() => archiveFromList(item)}
+                            >
+                              Arsipkan
+                            </Button>
+                          ) : null}
+                        </div>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </section>
 
       <section className="grid gap-4 lg:grid-cols-[280px_minmax(0,1fr)]">
         <div className="space-y-4 rounded-xl border border-slate-200 bg-[var(--brand-surface)] p-4">
@@ -508,4 +701,46 @@ function DeleteNodeDialog({
       </div>
     </Modal>
   );
+}
+
+const HIERARCHY_STATUS_STYLES: Record<string, string> = {
+  DRAFT: "bg-amber-50 text-amber-700",
+  ACTIVE: "bg-emerald-50 text-emerald-700",
+  ARCHIVED: "bg-slate-100 text-slate-600",
+};
+
+const HIERARCHY_STATUS_LABELS: Record<string, string> = {
+  DRAFT: "Draft",
+  ACTIVE: "Aktif",
+  ARCHIVED: "Diarsipkan",
+};
+
+function HierarchyStatusBadge({ status }: { status: string }) {
+  return (
+    <span
+      className={`rounded-full px-2 py-0.5 text-xs font-medium ${
+        HIERARCHY_STATUS_STYLES[status] ?? "bg-slate-100 text-slate-600"
+      }`}
+    >
+      {HIERARCHY_STATUS_LABELS[status] ?? status}
+    </span>
+  );
+}
+
+/** Last-6 fallback when a master record is archived and no longer listed. */
+function shortIdentifier(value: string): string {
+  return value ? `#${value.slice(-6)}` : "—";
+}
+
+function formatUpdatedAt(value?: string | null): string {
+  if (!value) return "—";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "—";
+  return date.toLocaleString("id-ID", {
+    day: "2-digit",
+    month: "short",
+    year: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
 }

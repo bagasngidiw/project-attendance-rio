@@ -1185,3 +1185,69 @@ Remaining (out of scope, hosting/env tasks):
 - [x] Backend syntax checks passed.
 - [x] `git diff --check` passed.
 - [x] Production environment and live database were not modified.
+
+---
+
+## Search, Approval Override & Hierarchy List (2026-11-01)
+
+### IMPL-FR-001: New accounts findable by partial search
+
+- [x] Replace the MongoDB `$text` search in `UserRepository.list` with a
+  case-insensitive escaped-regex partial match across `name`, `username`,
+  `email`, and `nip`.
+- [x] Remove the whole-word `$text` index; add regular indexes on `name` and
+  `nip` (username/email were already uniquely indexed).
+
+#### Verification
+
+- [x] Integration test: `search=employ` returns the seeded `employee` account
+  (a strict fragment the legacy `$text` index could not match).
+
+### IMPL-FR-002: Superadmin sees every request and can override approval
+
+- [x] `ApprovalService.listUnified`: SUPER_ADMIN receives a company-wide list
+  (all request types, all requesters) instead of the assignment-scoped view.
+- [x] `ApprovalService.listHistoryUnified`: SUPER_ADMIN sees the company-wide
+  decision history; `from`/`to`/`employeeId` filters are honoured and the
+  history now sorts by `decidedAt` (the previous `field` argument was ignored).
+- [x] `ApprovalService.decide`: SUPER_ADMIN may decide an unassigned
+  ROLE-targeted request without claiming it. HR_ADMIN keeps the stricter
+  assigned-only rule.
+- [x] Decisions persist the actual actor on `approval.approvedBy` /
+  `approval.rejectedBy` and claim the assignment when it was unassigned.
+- [x] `approvalQuerySchema` accepts `ALL` so the inbox status filter can be
+  removed; `GET /approvals` accepts `status=ALL`.
+- [x] Frontend `UnifiedApprovalPage`: the status select is enabled on both tabs
+  (PENDING/APPROVED/REJECTED/CANCELLED/ALL); SUPER_ADMIN bypasses the
+  claim-first disable on approve/reject.
+
+#### Note
+
+- Salary slips (`/salary-slips`) have no approval workflow: they are uploaded
+  directly by `salary:manage` holders and viewed by employees. There is
+  therefore no salary-slip row to show in the approval inbox.
+
+#### Verification
+
+- [x] Integration test: SUPER_ADMIN sees an unassigned employee request, can
+  approve it without claiming, and it appears in the company-wide history.
+- [x] Existing F8 security test still passes (HR_ADMIN unassigned -> 404;
+  employee without permission -> 403).
+
+### IMPL-FR-003: Hierarchy page lists every created chart
+
+- [x] `HierarchyPage` now renders a "Daftar Bagan Hirarki" table fed by
+  `GET /hierarchies`: contract, placement, status, node count, version,
+  last-updated time.
+- [x] Actions: **Buka** loads the chart into the editor; **Aktifkan** for DRAFT
+  charts with nodes; **Arsipkan** for ACTIVE charts.
+- [x] Status filter (all/DRAFT/ACTIVE/ARCHIVED).
+- [x] The list refreshes after create/add node/remove node/activate/archive.
+
+#### Verification
+
+- [x] Frontend TypeScript/Vite production build passed.
+- [x] Hierarchy integration test passed.
+- [x] Unified-approval integration tests: 9/9 passed.
+- [x] Approvals integration tests: 5/5 passed.
+- [x] Backend unit suite: 782/782 passed.

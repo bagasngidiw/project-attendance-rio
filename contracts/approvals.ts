@@ -10,8 +10,16 @@ export type { RequestDto, RequestListResult };
 
 export type DecisionAction = "APPROVED" | "REJECTED";
 
-/** Statuses the unified approval surface can filter by (FR-063). */
-export type UnifiedApprovalStatus = "PENDING" | "APPROVED" | "REJECTED";
+/**
+ * Statuses the unified approval surface can filter by (FR-063).
+ * `ALL` removes the status filter so a superadmin can audit every request.
+ */
+export type UnifiedApprovalStatus =
+  | "ALL"
+  | "PENDING"
+  | "APPROVED"
+  | "REJECTED"
+  | "CANCELLED";
 
 /** Filters for the unified approval list/history (FR-063 GET /approvals). */
 export interface UnifiedApprovalParams {

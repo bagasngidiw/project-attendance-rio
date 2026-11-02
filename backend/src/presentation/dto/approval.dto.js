@@ -19,7 +19,8 @@ const escalateDto = z.object({
 
 const approvalQuerySchema = z.object({
   type: z.enum(["LEAVE", "OVERTIME", "TRIP", "PERMISSION", "SAKIT"]).optional(),
-  status: z.enum(["PENDING", "APPROVED", "REJECTED", "CANCELLED"]).optional(),
+  // "ALL" is used by the superadmin inbox to remove the status filter entirely.
+  status: z.enum(["ALL", "PENDING", "APPROVED", "REJECTED", "CANCELLED"]).optional(),
   employeeId: z.string().min(1).optional(),
   from: z.string().optional(),
   to: z.string().optional(),

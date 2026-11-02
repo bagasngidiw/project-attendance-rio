@@ -156,6 +156,55 @@ test("FR-063: unified approval list + drill-down work for the manager", async ()
   assert.ok(Array.isArray(drill.body.data.events));
 });
 
+test("FR-063: SUPER_ADMIN sees every pending request and can override the approval", async () => {
+  const employee = await signIn("employee", "Employee2026!");
+  const admin = await signIn("superadmin", createConfig().seed.superAdminPassword);
+  const req = await submitLeave(employee.accessToken);
+
+  // The request is ROLE-targeted and unclaimed, yet the superadmin must see it
+  // even though they are not the assigned/eligible approver.
+  const unified = await request(app)
+    .get("/api/v1/approvals")
+    .set("Authorization", `Bearer ${admin.accessToken}`);
+  assert.equal(unified.status, 200, JSON.stringify(unified.body));
+  assert.ok(
+    unified.body.data.items.some((item) => item.id === req.id),
+    "superadmin sees the unassigned request"
+  );
+
+  // Override decision without a prior claim.
+  const decided = await request(app)
+    .post(`/api/v1/approvals/${req.id}/decide`)
+    .set("Authorization", `Bearer ${admin.accessToken}`)
+    .send({ decision: "APPROVED" });
+  assert.equal(decided.status, 200, JSON.stringify(decided.body));
+  assert.equal(decided.body.data.status, "APPROVED");
+  assert.equal(decided.body.data.approval.approvedBy, admin.user.id);
+
+  // The decided request now appears in the company-wide history.
+  const history = await request(app)
+    .get("/api/v1/approvals/history")
+    .set("Authorization", `Bearer ${admin.accessToken}`);
+  assert.equal(history.status, 200, JSON.stringify(history.body));
+  assert.ok(history.body.data.items.some((item) => item.id === req.id));
+});
+
+test("FR-029: user search matches partial fragments (new accounts)", async () => {
+  const admin = await signIn("superadmin", createConfig().seed.superAdminPassword);
+
+  // "employ" is a strict fragment (no word boundary) that the legacy `$text`
+  // index could not match. The seeded "employee" account must be found.
+  const res = await request(app)
+    .get("/api/v1/users")
+    .query({ search: "employ" })
+    .set("Authorization", `Bearer ${admin.accessToken}`);
+  assert.equal(res.status, 200, JSON.stringify(res.body));
+  assert.ok(
+    res.body.data.items.some((item) => item.username === "employee"),
+    "partial username fragment returns the account"
+  );
+});
+
 test("FR-063: escalation is recorded and never changes the request status", async () => {
   const employee = await signIn("employee", "Employee2026!");
   const req = await submitLeave(employee.accessToken);

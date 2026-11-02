@@ -79,6 +79,9 @@ export function UnifiedApprovalPage() {
   const { user } = useAuth();
   const { hasPermission } = usePermission();
   const anyApprove = hasPermission(APPROVE_ANY);
+  // SUPER_ADMIN is the designated override authority: can see every request
+  // and decide any of them, regardless of the per-type assignment.
+  const isSuperAdmin = (user?.roles ?? []).includes("SUPER_ADMIN");
 
   const params = useMemo(
     () => ({ ...applied, page, pageSize: PAGE_SIZE }),
@@ -108,9 +111,11 @@ export function UnifiedApprovalPage() {
     e.preventDefault();
     setApplied({
       type: (type || undefined) as RequestType | undefined,
+      // Pending defaults to PENDING, but the status select is now an explicit
+      // filter (including ALL) so superadmin can audit every request state.
       status:
         tab === "pending"
-          ? "PENDING"
+          ? ((status || "PENDING") as UnifiedApprovalStatus)
           : ((status || undefined) as UnifiedApprovalStatus | undefined),
       employeeId: employeeId || undefined,
       from: from || undefined,
@@ -122,13 +127,15 @@ export function UnifiedApprovalPage() {
   function canDecide(request: RequestDto): boolean {
     return (
       request.status === "PENDING_APPROVAL" &&
-      hasPermission(APPROVE_BY_TYPE[request.type])
+      (isSuperAdmin || hasPermission(APPROVE_BY_TYPE[request.type]))
     );
   }
 
   /** FR-008: role-targeted PENDING requests can be claimed by an eligible approver. */
   function canClaim(request: RequestDto): boolean {
+    // Superadmin overrides directly; claiming is only for eligible approvers.
     return (
+      !isSuperAdmin &&
       request.status === "PENDING_APPROVAL" &&
       request.approval?.targetType === "ROLE" &&
       request.approval.assignedUserId == null &&
@@ -212,35 +219,34 @@ export function UnifiedApprovalPage() {
           </select>
         </div>
 
-        {tab === "pending" ? (
-          <div className="w-full sm:w-40">
-            <label className="mb-1.5 block text-sm font-medium text-slate-700">
-              Status
-            </label>
-            <select
-              className="h-10 w-full rounded-lg border border-slate-200 bg-[var(--brand-surface)] px-3 text-sm focus:border-slate-900 focus:outline-none"
-              value="PENDING"
-              disabled
-            >
-              <option value="PENDING">Menunggu</option>
-            </select>
-          </div>
-        ) : (
-          <div className="w-full sm:w-40">
-            <label className="mb-1.5 block text-sm font-medium text-slate-700">
-              Status
-            </label>
-            <select
-              className="h-10 w-full rounded-lg border border-slate-200 bg-[var(--brand-surface)] px-3 text-sm focus:border-slate-900 focus:outline-none"
-              value={status}
-              onChange={(e) => setStatus(e.target.value)}
-            >
-              <option value="">Semua</option>
-              <option value="APPROVED">Disetujui</option>
-              <option value="REJECTED">Ditolak</option>
-            </select>
-          </div>
-        )}
+        <div className="w-full sm:w-40">
+          <label className="mb-1.5 block text-sm font-medium text-slate-700">
+            Status
+          </label>
+          <select
+            className="h-10 w-full rounded-lg border border-slate-200 bg-[var(--brand-surface)] px-3 text-sm focus:border-slate-900 focus:outline-none"
+            value={tab === "pending" ? status || "PENDING" : status}
+            onChange={(e) => setStatus(e.target.value)}
+          >
+            {tab === "pending" ? (
+              <>
+                <option value="PENDING">Menunggu</option>
+                <option value="APPROVED">Disetujui</option>
+                <option value="REJECTED">Ditolak</option>
+                <option value="CANCELLED">Dibatalkan</option>
+                <option value="ALL">Semua status</option>
+              </>
+            ) : (
+              <>
+                <option value="">Semua</option>
+                <option value="APPROVED">Disetujui</option>
+                <option value="REJECTED">Ditolak</option>
+                <option value="CANCELLED">Dibatalkan</option>
+                <option value="ALL">Semua status</option>
+              </>
+            )}
+          </select>
+        </div>
 
         <div className="w-full sm:w-56">
           <Input
@@ -365,9 +371,9 @@ export function UnifiedApprovalPage() {
                             <Button
                               size="sm"
                               variant="danger"
-                              disabled={needsClaimFirst(request)}
+                              disabled={!isSuperAdmin && needsClaimFirst(request)}
                               title={
-                                needsClaimFirst(request)
+                                !isSuperAdmin && needsClaimFirst(request)
                                   ? claimFirstTooltip(request)
                                   : undefined
                               }
@@ -379,9 +385,9 @@ export function UnifiedApprovalPage() {
                             </Button>
                             <Button
                               size="sm"
-                              disabled={needsClaimFirst(request)}
+                              disabled={!isSuperAdmin && needsClaimFirst(request)}
                               title={
-                                needsClaimFirst(request)
+                                !isSuperAdmin && needsClaimFirst(request)
                                   ? claimFirstTooltip(request)
                                   : undefined
                               }

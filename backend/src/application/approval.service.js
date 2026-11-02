@@ -124,6 +124,37 @@ class ApprovalService {
    * @param {{ type?: string, status?: string, employeeId?: string, from?: string, to?: string, page?: number, pageSize?: number }} filters
    */
   async listUnified(actor = {}, filters = {}) {
+    // Superadmin oversees every request type and is the designated override
+    // authority, so the inbox is company-wide instead of assignment-scoped.
+    // This is the list-level half of the override: the decision itself is
+    // already permitted by ApprovalEngineService.decide().
+    const isSuperAdmin = (actor.actorRoleKeys ?? []).includes("SUPER_ADMIN");
+    if (isSuperAdmin) {
+      const { items, total } = await this.requestRepository.findWithFilters({
+        requesterId: filters.employeeId || undefined,
+        // "ALL" removes the status filter so the superadmin can audit every
+        // request state from one surface.
+        status:
+          filters.status === "ALL"
+            ? undefined
+            : filters.status ?? REQUEST_STATUS.PENDING,
+        type: filters.type ? filters.type.toUpperCase() : undefined,
+        from: filters.from,
+        to: filters.to,
+        page: filters.page ?? 1,
+        pageSize: filters.pageSize ?? 20,
+      });
+      const enriched = await Promise.all(
+        items.map((item) => this.enrichNames(this.requestService.toDto(item)))
+      );
+      return {
+        items: enriched,
+        total,
+        page: filters.page ?? 1,
+        pageSize: filters.pageSize ?? 20,
+      };
+    }
+
     const delegatedIds = await this.resolveDelegatedApproverIds(actor.actorId);
     const approverIds = [actor.actorId, ...delegatedIds].filter(Boolean);
     // Approval visibility is assignment/eligibility based. Module view_all
@@ -153,7 +184,10 @@ class ApprovalService {
       : { $or: approvalVisibility };
     const { items, total } = await this.requestRepository.findWithFilters({
       extra: visibilityExtra,
-      status: filters.status ?? REQUEST_STATUS.PENDING,
+      status:
+        filters.status === "ALL"
+          ? undefined
+          : filters.status ?? REQUEST_STATUS.PENDING,
       type: filters.type ? filters.type.toUpperCase() : undefined,
       from: filters.from,
       to: filters.to,
@@ -181,7 +215,9 @@ class ApprovalService {
    * @param {{ type?: string, page?: number, pageSize?: number }} filters
    */
   async listHistoryUnified(actor = {}, filters = {}) {
+    // Superadmin always sees the company-wide decision history.
     const seesAll =
+      (actor.actorRoleKeys ?? []).includes("SUPER_ADMIN") ||
       (actor.actorPermissions ?? []).includes("*") ||
       ["leave", "trip", "overtime", "permission", "sakit"].some((t) =>
         hasPermission(actor.actorPermissions ?? [], `${t}:view_all`)
@@ -190,13 +226,29 @@ class ApprovalService {
     if (!seesAll) {
       return this.listHistory(actor.actorId, filters);
     }
-    const { items, total } = await this.requestRepository.findWithFilters({
-      status: { $in: [REQUEST_STATUS.APPROVED, REQUEST_STATUS.REJECTED] },
-      type: filters.type ? filters.type.toUpperCase() : undefined,
-      page: filters.page ?? 1,
-      pageSize: filters.pageSize ?? 20,
-      field: "decidedAt",
-    });
+    const { items, total } = await this.requestRepository.findWithFilters(
+      {
+        status:
+          filters.status && filters.status !== "ALL"
+            ? filters.status
+            : {
+                $in: [
+                  REQUEST_STATUS.APPROVED,
+                  REQUEST_STATUS.REJECTED,
+                  REQUEST_STATUS.CANCELLED,
+                ],
+              },
+        type: filters.type ? filters.type.toUpperCase() : undefined,
+        from: filters.from,
+        to: filters.to,
+        requesterId: filters.employeeId || undefined,
+        page: filters.page ?? 1,
+        pageSize: filters.pageSize ?? 20,
+      },
+      // Sort by the decision date (second argument) — previously `field` was
+      // passed as a filter key and silently ignored.
+      { field: "decidedAt" }
+    );
     const enriched = await Promise.all(
       items.map((item) => this.enrichNames(this.requestService.toDto(item)))
     );
@@ -304,9 +356,12 @@ class ApprovalService {
       throw new NotFoundError("Request not found.", "REQUEST_NOT_FOUND");
     }
 
-    // Data scope: only the assigned approver (or effective delegate) may decide.
+    // Data scope: only the assigned approver (or effective delegate) may
+    // decide — except SUPER_ADMIN, the designated override authority
+    // (agents.md §23). HR_ADMIN keeps the stricter assigned-only rule.
+    const isAdminOverride = (actor.actorRoleKeys ?? []).includes("SUPER_ADMIN");
     let delegatedDecision = false;
-    if (String(request.approverId) !== String(actor.actorId)) {
+    if (!isAdminOverride && String(request.approverId) !== String(actor.actorId)) {
       const effective = this.delegationService
         ? await this.delegationService.resolveEffectiveApprover({
             approverId: request.approverId,
@@ -367,11 +422,30 @@ class ApprovalService {
     // FR-063 U.6: the comment is stored as provided (never blank for rejects).
     const storedComment = normalizeDecisionComment(comment);
 
+    // Persist the actual decision-maker on the embedded approval block
+    // (agents.md §9/§17). On an admin override of an unclaimed ROLE-targeted
+    // request, the override authority becomes the assigned approver.
+    const decidedAt = new Date();
+    const approvalFields = {
+      ...(request.approval?.assignedUserId
+        ? {}
+        : { assignedUserId: actor.actorId ?? null, assignedAt: decidedAt }),
+      status: normalizedDecision,
+      ...(normalizedDecision === REQUEST_STATUS.APPROVED
+        ? { approvedBy: actor.actorId ?? null, approvedAt: decidedAt }
+        : {
+            rejectedBy: actor.actorId ?? null,
+            rejectedAt: decidedAt,
+            rejectionReason: storedComment,
+          }),
+    };
+
     const decided = await this.requestService.transition({
       requestId,
       toStatus: normalizedDecision,
       actor,
       comment: storedComment,
+      approvalFields,
     });
 
     // Record delegation context when the decision was made by a delegate.
