@@ -1251,3 +1251,88 @@ Remaining (out of scope, hosting/env tasks):
 - [x] Unified-approval integration tests: 9/9 passed.
 - [x] Approvals integration tests: 5/5 passed.
 - [x] Backend unit suite: 782/782 passed.
+
+## Persetujuan Filter & Superadmin Override Hardening (2026-11-03)
+
+### IMPL-FR-004: Persetujuan module/status filters always apply
+
+- [x] `approvalQuerySchema` accepts the outward API vocabulary
+  `PENDING_APPROVAL` and normalizes it to the persisted `PENDING` value, so a
+  filtered client never receives a 400 for using the API status name.
+- [x] SUPER_ADMIN unified list honours `type`, `status` (including `ALL`),
+  `employeeId`, `from`, and `to` together.
+- [x] "Terapkan filter" resets pagination to page 1 (already present) and the
+  page now surfaces the real API error with a retry action instead of showing a
+  generic empty state.
+
+#### Verification
+
+- [x] Integration: SUPER_ADMIN filters LEAVE/OVERTIME by PENDING/APPROVED/ALL
+  and by requester; the `PENDING_APPROVAL` alias returns 200 and the matching
+  rows.
+- [x] Frontend TypeScript/Vite production build passed.
+
+### IMPL-FR-005: Superadmin / override authority sees and decides every approval
+
+- [x] Added the explicit `approval:override` capability to the `APPROVAL`
+  permission registry, the shared Typed contract, the RBAC checklist, and the
+  high-privilege warning set. The boot seed backfills it onto `SUPER_ADMIN`.
+- [x] Added a shared domain policy (`approval-access.js`):
+  `SUPER_ADMIN` role OR wildcard `*` OR `approval:override` grants company-wide
+  pending visibility/decision override; any `*:view_all` still grants only
+  decision-history read visibility.
+- [x] Applied the policy to the unified pending list, history, both decision
+  paths (`approval.service` and `approval-engine`), drill-down/view checks, and
+  engine approval history.
+- [x] Override decisions on unclaimed requests now persist
+  `assignedUserId`/`assignedAt` in both decision paths alongside
+  `approvedBy`/`rejectedBy`, so the actual approver is auditable.
+- [x] `enrichNames` resolves the approver from the embedded
+  assignment/approvedBy/rejectedBy when the top-level `approverId` is null.
+- [x] Frontend gating uses the same capability in the unified table, drill-down,
+  decision dialog, and legacy decision card; the claim-first block is bypassed
+  for the override authority.
+- [x] Navigation and route guards accept `approval:override` as an approval
+  capability.
+
+#### Verification
+
+- [x] Integration: a custom role with only `approval:override` sees every
+  pending request and approves an unassigned request.
+- [x] Integration: SUPER_ADMIN override via `/approvals/:id/decide` and via the
+  shared `/requests/:id/approve` route; both persist the assignment and actual
+  approver.
+- [x] Unit: capability matrix covers SUPER_ADMIN, wildcard, explicit override,
+  and confirms `*:view_all`/HR_ADMIN/ADMIN alone do not grant the pending
+  override.
+- [x] Backend full suite: 923/923 passed.
+- [x] Frontend TypeScript/Vite production build passed.
+
+### IMPL-FR-006: Role-targeted requests stay visible without a hierarchy chart
+
+- [x] `buildAssignment` now fills
+  `configurationSnapshot.eligibleApproverIds` from the configured eligible users
+  even when no hierarchy chart exists. Explicit ROLE targets narrow to that
+  role; auto-resolved targets keep the same all-eligible behavior as
+  `claimApproval` (`explicitTarget=false`).
+- [x] This keeps unclaimed role-targeted requests visible to the eligible
+  approvers in the unified inbox and viewable on the drill-down page before any
+  claim.
+
+#### Verification
+
+- [x] Integration: an eligible MANAGER sees an unclaimed auto-targeted request
+  in `GET /approvals` before claiming it.
+- [x] Backend full suite: 923/923 passed.
+
+#### Deployment Note
+
+- The production API is a manually started `node server.js` process.
+  `deploy.js` only touches `backend/tmp/restart.txt`, which the broken Passenger
+  supervisor does not consume. After `npm run deploy`, restart the Node process
+  manually and hard-refresh the browser.
+- The boot seed backfills `approval:override` onto the existing `SUPER_ADMIN`
+  role. If the operational account uses the `ADMIN` role instead of
+  `SUPER_ADMIN`, grant `approval:override` explicitly through the RBAC console
+  (or use the seeded SUPER_ADMIN account). Do not grant it to every
+  `*:view_all` holder.

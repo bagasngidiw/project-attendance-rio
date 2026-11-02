@@ -26,6 +26,7 @@ const CHECKLIST_GROUPS = Object.freeze([
   { key: "USERS", label: "Manajemen Pengguna" },
   { key: "ORG", label: "Manajemen Departemen & Jabatan" },
   { key: "REPORTING", label: "Laporan" },
+  { key: "APPROVAL", label: "Alur Persetujuan" },
   { key: "AUDIT", label: "Log Aktivitas & Audit" },
   { key: "RBAC", label: "Manajemen Peran & Izin" },
   { key: "PLATFORM", label: "Administrasi Sistem" },
@@ -72,6 +73,7 @@ const HIGH_PRIVILEGE_PERMISSIONS = Object.freeze([
   "platform:settings",
   "platform:modules",
   "platform:override_cutoff",
+  "approval:override",
 ]);
 
 /**

@@ -17,10 +17,18 @@ const escalateDto = z.object({
   message: z.string().max(512).optional().default(""),
 });
 
+// Persistence stores `PENDING`; the outward API status name is
+// `PENDING_APPROVAL`. Accept both so a filtered client never receives a 400
+// just because it used the API vocabulary.
+const approvalStatusSchema = z.preprocess(
+  (value) => (value === "PENDING_APPROVAL" ? "PENDING" : value),
+  z.enum(["ALL", "PENDING", "APPROVED", "REJECTED", "CANCELLED"]).optional()
+);
+
 const approvalQuerySchema = z.object({
   type: z.enum(["LEAVE", "OVERTIME", "TRIP", "PERMISSION", "SAKIT"]).optional(),
   // "ALL" is used by the superadmin inbox to remove the status filter entirely.
-  status: z.enum(["ALL", "PENDING", "APPROVED", "REJECTED", "CANCELLED"]).optional(),
+  status: approvalStatusSchema,
   employeeId: z.string().min(1).optional(),
   from: z.string().optional(),
   to: z.string().optional(),

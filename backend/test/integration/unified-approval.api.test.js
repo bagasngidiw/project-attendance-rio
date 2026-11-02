@@ -66,6 +66,15 @@ async function submitLeave(accessToken) {
   return res.body.data;
 }
 
+async function submitOvertime(accessToken) {
+  const res = await request(app)
+    .post("/api/v1/overtime/requests")
+    .set("Authorization", `Bearer ${accessToken}`)
+    .send({ date: "2026-09-10", startTime: "18:00", endTime: "21:00", reason: "Catch-up" });
+  assert.equal(res.status, 201, JSON.stringify(res.body));
+  return res.body.data;
+}
+
 test("FR-064: seeded roles carry level + dataScope; SUPER_ADMIN has the highest level", async () => {
   const admin = await signIn("superadmin", createConfig().seed.superAdminPassword);
   const res = await request(app)
@@ -187,6 +196,144 @@ test("FR-063: SUPER_ADMIN sees every pending request and can override the approv
     .set("Authorization", `Bearer ${admin.accessToken}`);
   assert.equal(history.status, 200, JSON.stringify(history.body));
   assert.ok(history.body.data.items.some((item) => item.id === req.id));
+});
+
+test("FR-002: SUPER_ADMIN filters the unified inbox by module, status, and requester", async () => {
+  const employee = await signIn("employee", "Employee2026!");
+  const admin = await signIn("superadmin", createConfig().seed.superAdminPassword);
+  const leave = await submitLeave(employee.accessToken);
+  const overtime = await submitOvertime(employee.accessToken);
+
+  // Module filter: LEAVE must not leak OVERTIME and vice versa.
+  const leaveOnly = await request(app)
+    .get("/api/v1/approvals")
+    .query({ type: "LEAVE", status: "PENDING" })
+    .set("Authorization", `Bearer ${admin.accessToken}`);
+  assert.equal(leaveOnly.status, 200, JSON.stringify(leaveOnly.body));
+  assert.ok(leaveOnly.body.data.items.some((item) => item.id === leave.id));
+  assert.ok(!leaveOnly.body.data.items.some((item) => item.id === overtime.id));
+
+  // Requester filter: only the selected employee's requests are returned.
+  const byEmployee = await request(app)
+    .get("/api/v1/approvals")
+    .query({ type: "OVERTIME", status: "PENDING", employeeId: employee.user.id })
+    .set("Authorization", `Bearer ${admin.accessToken}`);
+  assert.equal(byEmployee.status, 200, JSON.stringify(byEmployee.body));
+  assert.ok(byEmployee.body.data.items.some((item) => item.id === overtime.id));
+
+  const otherEmployee = await request(app)
+    .get("/api/v1/approvals")
+    .query({ type: "OVERTIME", status: "PENDING", employeeId: admin.user.id })
+    .set("Authorization", `Bearer ${admin.accessToken}`);
+  assert.equal(otherEmployee.status, 200, JSON.stringify(otherEmployee.body));
+  assert.equal(otherEmployee.body.data.items.length, 0);
+
+  // Status filter: approving the leave moves it out of PENDING and into
+  // APPROVED; the overtime remains pending.
+  const decided = await request(app)
+    .post(`/api/v1/approvals/${leave.id}/decide`)
+    .set("Authorization", `Bearer ${admin.accessToken}`)
+    .send({ decision: "APPROVED" });
+  assert.equal(decided.status, 200, JSON.stringify(decided.body));
+
+  const approvedLeave = await request(app)
+    .get("/api/v1/approvals")
+    .query({ type: "LEAVE", status: "APPROVED" })
+    .set("Authorization", `Bearer ${admin.accessToken}`);
+  assert.equal(approvedLeave.status, 200, JSON.stringify(approvedLeave.body));
+  assert.ok(approvedLeave.body.data.items.some((item) => item.id === leave.id));
+
+  const pendingLeave = await request(app)
+    .get("/api/v1/approvals")
+    .query({ type: "LEAVE", status: "PENDING" })
+    .set("Authorization", `Bearer ${admin.accessToken}`);
+  assert.equal(pendingLeave.status, 200, JSON.stringify(pendingLeave.body));
+  assert.ok(!pendingLeave.body.data.items.some((item) => item.id === leave.id));
+
+  // "ALL" removes the status filter so every state is audit-visible.
+  const all = await request(app)
+    .get("/api/v1/approvals")
+    .query({ type: "LEAVE", status: "ALL" })
+    .set("Authorization", `Bearer ${admin.accessToken}`);
+  assert.equal(all.status, 200, JSON.stringify(all.body));
+  assert.ok(all.body.data.items.some((item) => item.id === leave.id));
+
+  // `PENDING_APPROVAL` is the outward API vocabulary and must normalise.
+  const alias = await request(app)
+    .get("/api/v1/approvals")
+    .query({ type: "OVERTIME", status: "PENDING_APPROVAL" })
+    .set("Authorization", `Bearer ${admin.accessToken}`);
+  assert.equal(alias.status, 200, JSON.stringify(alias.body));
+  assert.ok(alias.body.data.items.some((item) => item.id === overtime.id));
+
+  // Override can open any module's detail without a prior claim.
+  const drill = await request(app)
+    .get(`/api/v1/approvals/${overtime.id}`)
+    .set("Authorization", `Bearer ${admin.accessToken}`);
+  assert.equal(drill.status, 200, JSON.stringify(drill.body));
+});
+
+test("FR-002: SUPER_ADMIN override via the shared request route claims the assignment", async () => {
+  const employee = await signIn("employee", "Employee2026!");
+  const admin = await signIn("superadmin", createConfig().seed.superAdminPassword);
+  const req = await submitLeave(employee.accessToken);
+
+  const approved = await request(app)
+    .post(`/api/v1/requests/${req.id}/approve`)
+    .set("Authorization", `Bearer ${admin.accessToken}`)
+    .send({});
+  assert.equal(approved.status, 200, JSON.stringify(approved.body));
+  assert.equal(approved.body.data.approval.approvedBy, admin.user.id);
+  assert.equal(
+    approved.body.data.approval.assignedUserId,
+    admin.user.id,
+    "override becomes the assigned approver"
+  );
+});
+
+test("FR-002: explicit approval:override grants company-wide visibility and decisions", async () => {
+  const employee = await signIn("employee", "Employee2026!");
+  const admin = await signIn("superadmin", createConfig().seed.superAdminPassword);
+  const req = await submitLeave(employee.accessToken);
+
+  const role = await request(app)
+    .post("/api/v1/rbac/admin/roles")
+    .set("Authorization", `Bearer ${admin.accessToken}`)
+    .send({
+      name: "Approval Override",
+      permissions: ["approval:override"],
+      level: 90,
+      dataScope: "ALL_EMPLOYEES",
+    });
+  assert.equal(role.status, 201, JSON.stringify(role.body));
+
+  const users = await request(app)
+    .get("/api/v1/users")
+    .query({ search: "hradmin" })
+    .set("Authorization", `Bearer ${admin.accessToken}`);
+  const hr = users.body.data.items.find((u) => u.username === "hradmin");
+  assert.ok(hr, "seeded hradmin user");
+
+  const assigned = await request(app)
+    .put(`/api/v1/rbac/users/${hr.id}/roles`)
+    .set("Authorization", `Bearer ${admin.accessToken}`)
+    .send({ roleIds: [role.body.data.id] });
+  assert.equal(assigned.status, 200, JSON.stringify(assigned.body));
+
+  const override = await signIn("hradmin", "HrAdmin2026!");
+
+  const list = await request(app)
+    .get("/api/v1/approvals")
+    .set("Authorization", `Bearer ${override.accessToken}`);
+  assert.equal(list.status, 200, JSON.stringify(list.body));
+  assert.ok(list.body.data.items.some((item) => item.id === req.id));
+
+  const decided = await request(app)
+    .post(`/api/v1/approvals/${req.id}/decide`)
+    .set("Authorization", `Bearer ${override.accessToken}`)
+    .send({ decision: "APPROVED" });
+  assert.equal(decided.status, 200, JSON.stringify(decided.body));
+  assert.equal(decided.body.data.approval.approvedBy, override.user.id);
 });
 
 test("FR-029: user search matches partial fragments (new accounts)", async () => {

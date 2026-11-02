@@ -24,6 +24,7 @@ const {
 } = require("../domain/approval");
 const { REQUEST_STATUS } = require("../domain/request");
 const { hasPermission } = require("../domain/permissions");
+const { canOverrideApprovals } = require("../domain/approval-access");
 const {
   NotFoundError,
   ValidationError,
@@ -206,11 +207,27 @@ class ApprovalEngineService {
       ? await this.hierarchyService.getAncestorUsers(requesterId)
       : null;
     const hierarchyContext = hierarchy?.chart ? hierarchy : null;
+    const contractTypeId = await this.resolveRequesterContract(requesterId);
+    // Role-targeted requests must stay visible/claimable even when no
+    // hierarchy chart exists. Without a chart the snapshot still needs the
+    // eligible approvers for the configured target so the unified inbox
+    // (which matches `eligibleApproverIds`) can surface the request.
+    //
+    // Explicit ROLE targets narrow to that role; auto-resolved targets keep
+    // the same all-eligible behavior as claimApproval (explicitTarget=false).
+    const fallbackRoleId =
+      explicitTarget && validated.targetType === APPROVAL_TARGET_TYPES.ROLE
+        ? validated.targetRoleId
+        : null;
     const eligibleForSnapshot = hierarchyContext
       ? (await this.approvalConfigurationService.getEligibleUsers(requestType, null, {
-        contractTypeId: await this.resolveRequesterContract(requesterId),
+        contractTypeId,
       })).filter((user) => hierarchyContext.ancestors.some((ancestor) => String(ancestor.userId) === String(user.userId)))
-      : [];
+      : await this.approvalConfigurationService.getEligibleUsers(
+        requestType,
+        fallbackRoleId,
+        { contractTypeId }
+      );
     const snapshot = this.approvalConfigurationService.buildSnapshot({
       requestType,
       targetType: validated.targetType,
@@ -455,9 +472,9 @@ class ApprovalEngineService {
     // Assignment: assigned approver (or effective admin override).
     const assignedUserId = request.approval?.assignedUserId ?? request.approverId ?? null;
     const isAssigned = assignedUserId && String(assignedUserId) === String(actor.actorId);
+    const canOverride = canOverrideApprovals(actor);
     const isAdminOverride =
-      (actor.actorRoleKeys ?? []).includes("HR_ADMIN") ||
-      (actor.actorRoleKeys ?? []).includes("SUPER_ADMIN");
+      (actor.actorRoleKeys ?? []).includes("HR_ADMIN") || canOverride;
     if (!isAssigned && !isAdminOverride) {
       throw new NotFoundError("Request not found.", "REQUEST_NOT_FOUND");
     }
@@ -470,8 +487,10 @@ class ApprovalEngineService {
     }
 
     // Permission for the request's type (defense in depth behind the route).
+    // The explicit company-wide override capability supersedes the per-type
+    // key — it is a granted, auditable privilege.
     const permissionKey = `${request.type.toLowerCase()}:approve`;
-    if (!hasPermission(actor.actorPermissions ?? [], permissionKey)) {
+    if (!canOverride && !hasPermission(actor.actorPermissions ?? [], permissionKey)) {
       throw new PermissionDeniedError(permissionKey);
     }
 
@@ -480,10 +499,22 @@ class ApprovalEngineService {
     assertNoSelfApprovalUnlessAllowed(request.requesterId, actor.actorId, selfAllowed);
 
     const now = new Date();
+    // An admin override of an unclaimed request becomes the assignment, so
+    // the audit trail names the actual decision-maker (mirrors
+    // ApprovalService.decide).
+    const assignmentFields = request.approval?.assignedUserId
+      ? {}
+      : { assignedUserId: actor.actorId ?? null, assignedAt: now };
     const approvalFields =
       toStatus === REQUEST_STATUS.APPROVED
-        ? { status: APPROVAL_STATUS.APPROVED, approvedBy: actor.actorId, approvedAt: now }
+        ? {
+            ...assignmentFields,
+            status: APPROVAL_STATUS.APPROVED,
+            approvedBy: actor.actorId,
+            approvedAt: now,
+          }
         : {
+            ...assignmentFields,
             status: APPROVAL_STATUS.REJECTED,
             rejectedBy: actor.actorId,
             rejectedAt: now,
@@ -515,7 +546,7 @@ class ApprovalEngineService {
     const isAssigned = request.approval?.assignedUserId &&
       String(request.approval.assignedUserId) === String(actor.actorId);
     const isAdmin = (actor.actorRoleKeys ?? []).includes("HR_ADMIN") ||
-      (actor.actorRoleKeys ?? []).includes("SUPER_ADMIN");
+      canOverrideApprovals(actor);
     if (!isRequester && !isAssigned && !isAdmin) {
       throw new NotFoundError("Request not found.", "REQUEST_NOT_FOUND");
     }

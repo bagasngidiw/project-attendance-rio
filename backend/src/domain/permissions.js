@@ -118,7 +118,9 @@ const PERMISSION_REGISTRY = Object.freeze({
 
   // FR-001: Superadmin manages the approval configuration (role × request type
   // × level). Configuration controls who MAY approve, never hardcoded roles.
-  APPROVAL: ["approval_config:manage"],
+  // `approval:override` is the explicit company-wide inbox/decision override
+  // capability (seeded to SUPER_ADMIN; grantable to a custom role).
+  APPROVAL: ["approval_config:manage", "approval:override"],
 
   // Contract + placement hierarchy chart administration. These permissions
   // expose the chart itself; module data visibility still requires the

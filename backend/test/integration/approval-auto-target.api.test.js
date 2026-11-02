@@ -104,6 +104,18 @@ test("FR-007: targetless submissions auto-assign the default eligible role acros
   assert.equal(permission.status, 201, JSON.stringify(permission.body));
   assert.equal(permission.body.data.approval.targetType, "ROLE");
 
+  // The eligible manager sees the unclaimed role-targeted request in the
+  // unified inbox. The configuration snapshot must carry eligible approver
+  // ids even when no hierarchy chart exists.
+  const managerInbox = await request(app)
+    .get("/api/v1/approvals")
+    .set("Authorization", `Bearer ${manager.accessToken}`);
+  assert.equal(managerInbox.status, 200, JSON.stringify(managerInbox.body));
+  assert.ok(
+    managerInbox.body.data.items.some((item) => item.id === leave.body.data.id),
+    "eligible manager sees the unclaimed role-targeted request"
+  );
+
   // The auto-targeted requests are claimable by an eligible approver.
   const claim = await request(app)
     .post(`/api/v1/requests/${leave.body.data.id}/claim`)

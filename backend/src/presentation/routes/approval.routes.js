@@ -32,6 +32,8 @@ const APPROVE_KEYS = [
   "trip:approve",
   "permission:approve",
   "sakit:approve",
+  // Company-wide override capability (grantable without every type key).
+  "approval:override",
 ];
 
 function createApprovalRoutes({ approvalController, authenticate, authorize }) {

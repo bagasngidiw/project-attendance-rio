@@ -8,9 +8,12 @@ import { useQuery } from "@tanstack/react-query";
 import axios from "axios";
 
 import type { RequestDto } from "@contracts/requests";
+import { PERMISSIONS } from "@contracts/permissions";
 
 import { approvalApi } from "@/lib/axios";
 import { payloadDisplayValue, payloadLabel, requestTypeLabel, isInternalPayloadKey } from "@/lib/labels";
+import { useAuth } from "@/features/auth/useAuth";
+import { usePermission } from "@/features/auth/usePermission";
 import { useLeaveTypeNames, leaveSummaryName, useSicknessTypeNames, sicknessSummaryName } from "@/features/requests/useLeaveTypeNames";
 import { toast } from "@/lib/toast";
 import { Modal } from "@/components/ui/Modal";
@@ -40,6 +43,13 @@ export function RequestDecisionCard({
   const [comment, setComment] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState<string | null>(null);
+
+  const { user } = useAuth();
+  const { hasPermission } = usePermission();
+  const canOverride =
+    (user?.roles ?? []).includes("SUPER_ADMIN") ||
+    hasPermission(PERMISSIONS.APPROVAL_OVERRIDE);
+  const mustClaim = !canOverride && needsClaimFirst(request);
 
   const { data: history } = useQuery({
     queryKey: ["request-history", request.id],
@@ -132,16 +142,16 @@ export function RequestDecisionCard({
           <Button
             variant="danger"
             loading={submitting === "REJECTED"}
-            disabled={needsClaimFirst(request)}
-            title={needsClaimFirst(request) ? claimFirstTooltip(request) : undefined}
+            disabled={mustClaim}
+            title={mustClaim ? claimFirstTooltip(request) : undefined}
             onClick={() => handleDecide("REJECTED")}
           >
             Tolak
           </Button>
           <Button
             loading={submitting === "APPROVED"}
-            disabled={needsClaimFirst(request)}
-            title={needsClaimFirst(request) ? claimFirstTooltip(request) : undefined}
+            disabled={mustClaim}
+            title={mustClaim ? claimFirstTooltip(request) : undefined}
             onClick={() => handleDecide("APPROVED")}
           >
             Setujui

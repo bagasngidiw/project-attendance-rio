@@ -18,6 +18,7 @@ import { toast } from "@/lib/toast";
 import { apiErrorMessage } from "@/lib/apiError";
 import { payloadDisplayValue, payloadLabel, requestStatusLabel, requestTypeLabel, isInternalPayloadKey } from "@/lib/labels";
 import { useLeaveTypeNames, leaveSummaryName, useSicknessTypeNames, sicknessSummaryName } from "@/features/requests/useLeaveTypeNames";
+import { useAuth } from "@/features/auth/useAuth";
 import { usePermission } from "@/features/auth/usePermission";
 import { claimFirstTooltip, needsClaimFirst } from "@/features/approvals/claimable";
 import { Modal } from "@/components/ui/Modal";
@@ -51,6 +52,7 @@ export function RequestDrillDownDialog({
     queryFn: () => approvalApi.drillDown(requestId).then((r) => r.data.data),
   });
 
+  const { user } = useAuth();
   const { hasPermission } = usePermission();
   const [decisionAction, setDecisionAction] = useState<DecisionAction | null>(
     null
@@ -58,12 +60,18 @@ export function RequestDrillDownDialog({
   const [claiming, setClaiming] = useState(false);
   const [claimError, setClaimError] = useState<string | null>(null);
 
+  const canOverride =
+    (user?.roles ?? []).includes("SUPER_ADMIN") ||
+    hasPermission(PERMISSIONS.APPROVAL_OVERRIDE);
+
   const request = data?.request;
   const canApprove = request
-    ? hasPermission(APPROVE_BY_TYPE[request.type])
+    ? canOverride || hasPermission(APPROVE_BY_TYPE[request.type])
     : false;
+  const mustClaim = Boolean(request && !canOverride && needsClaimFirst(request));
   const canClaim = Boolean(
     request &&
+      !canOverride &&
       request.status === "PENDING_APPROVAL" &&
       request.approval?.targetType === "ROLE" &&
       request.approval.assignedUserId == null &&
@@ -158,23 +166,15 @@ export function RequestDrillDownDialog({
                 ) : null}
                 <Button
                   variant="danger"
-                  disabled={needsClaimFirst(request)}
-                  title={
-                    needsClaimFirst(request)
-                      ? claimFirstTooltip(request)
-                      : undefined
-                  }
+                  disabled={mustClaim}
+                  title={mustClaim ? claimFirstTooltip(request) : undefined}
                   onClick={() => setDecisionAction("REJECTED")}
                 >
                   Tolak
                 </Button>
                 <Button
-                  disabled={needsClaimFirst(request)}
-                  title={
-                    needsClaimFirst(request)
-                      ? claimFirstTooltip(request)
-                      : undefined
-                  }
+                  disabled={mustClaim}
+                  title={mustClaim ? claimFirstTooltip(request) : undefined}
                   onClick={() => setDecisionAction("APPROVED")}
                 >
                   Setujui

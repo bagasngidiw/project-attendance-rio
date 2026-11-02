@@ -79,16 +79,20 @@ export function UnifiedApprovalPage() {
   const { user } = useAuth();
   const { hasPermission } = usePermission();
   const anyApprove = hasPermission(APPROVE_ANY);
-  // SUPER_ADMIN is the designated override authority: can see every request
-  // and decide any of them, regardless of the per-type assignment.
-  const isSuperAdmin = (user?.roles ?? []).includes("SUPER_ADMIN");
+  // Company-wide override authority: the SUPER_ADMIN role, the wildcard
+  // permission, or the explicit approval:override capability (same rule as
+  // the backend). These actors see every request and decide any of them,
+  // regardless of the per-type assignment.
+  const canOverride =
+    (user?.roles ?? []).includes("SUPER_ADMIN") ||
+    hasPermission(PERMISSIONS.APPROVAL_OVERRIDE);
 
   const params = useMemo(
     () => ({ ...applied, page, pageSize: PAGE_SIZE }),
     [applied, page]
   );
 
-  const { data, isLoading, isError, refetch } = useQuery({
+  const { data, isLoading, isError, error, refetch } = useQuery({
     queryKey: ["unified-approvals", tab, params],
     queryFn: () =>
       tab === "pending"
@@ -127,7 +131,7 @@ export function UnifiedApprovalPage() {
   function canDecide(request: RequestDto): boolean {
     return (
       request.status === "PENDING_APPROVAL" &&
-      (isSuperAdmin || hasPermission(APPROVE_BY_TYPE[request.type]))
+      (canOverride || hasPermission(APPROVE_BY_TYPE[request.type]))
     );
   }
 
@@ -135,7 +139,7 @@ export function UnifiedApprovalPage() {
   function canClaim(request: RequestDto): boolean {
     // Superadmin overrides directly; claiming is only for eligible approvers.
     return (
-      !isSuperAdmin &&
+      !canOverride &&
       request.status === "PENDING_APPROVAL" &&
       request.approval?.targetType === "ROLE" &&
       request.approval.assignedUserId == null &&
@@ -282,8 +286,11 @@ export function UnifiedApprovalPage() {
           <Spinner label="Memuat permintaan..." />
         </div>
       ) : isError ? (
-        <div className="rounded-lg border border-red-200 bg-red-50 p-4 text-sm text-red-700">
-          Gagal memuat permintaan.
+        <div className="flex flex-col items-start gap-3 rounded-lg border border-red-200 bg-red-50 p-4 text-sm text-red-700">
+          <p>{apiErrorMessage(error) || "Gagal memuat permintaan."}</p>
+          <Button size="sm" variant="secondary" onClick={() => refetch()}>
+            Coba lagi
+          </Button>
         </div>
       ) : items.length === 0 ? (
         <div className="rounded-xl border border-slate-200 bg-[var(--brand-surface)] p-8 text-center text-sm text-slate-500">
@@ -371,9 +378,9 @@ export function UnifiedApprovalPage() {
                             <Button
                               size="sm"
                               variant="danger"
-                              disabled={!isSuperAdmin && needsClaimFirst(request)}
+                              disabled={!canOverride && needsClaimFirst(request)}
                               title={
-                                !isSuperAdmin && needsClaimFirst(request)
+                                !canOverride && needsClaimFirst(request)
                                   ? claimFirstTooltip(request)
                                   : undefined
                               }
@@ -385,9 +392,9 @@ export function UnifiedApprovalPage() {
                             </Button>
                             <Button
                               size="sm"
-                              disabled={!isSuperAdmin && needsClaimFirst(request)}
+                              disabled={!canOverride && needsClaimFirst(request)}
                               title={
-                                !isSuperAdmin && needsClaimFirst(request)
+                                !canOverride && needsClaimFirst(request)
                                   ? claimFirstTooltip(request)
                                   : undefined
                               }

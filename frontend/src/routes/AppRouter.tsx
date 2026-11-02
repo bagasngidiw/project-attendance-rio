@@ -290,6 +290,7 @@ export default function AppRouter() {
                     PERMISSIONS.TRIP_APPROVE,
                     PERMISSIONS.PERMISSION_APPROVE,
                     PERMISSIONS.SAKIT_APPROVE,
+                    PERMISSIONS.APPROVAL_OVERRIDE,
                   ]}
                 >
                   <UnifiedApprovalPage />
@@ -307,6 +308,7 @@ export default function AppRouter() {
                     PERMISSIONS.TRIP_APPROVE,
                     PERMISSIONS.PERMISSION_APPROVE,
                     PERMISSIONS.SAKIT_APPROVE,
+                    PERMISSIONS.APPROVAL_OVERRIDE,
                   ]}
                 >
                   <ApprovalInboxPage />
@@ -324,6 +326,7 @@ export default function AppRouter() {
                     PERMISSIONS.TRIP_APPROVE,
                     PERMISSIONS.PERMISSION_APPROVE,
                     PERMISSIONS.SAKIT_APPROVE,
+                    PERMISSIONS.APPROVAL_OVERRIDE,
                   ]}
                 >
                   <ApprovalHistoryPage />

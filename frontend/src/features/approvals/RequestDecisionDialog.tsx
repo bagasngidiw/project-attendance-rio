@@ -11,10 +11,13 @@ import axios from "axios";
 
 import type { DecisionAction } from "@contracts/approvals";
 import type { RequestDto } from "@contracts/requests";
+import { PERMISSIONS } from "@contracts/permissions";
 
 import { requestApi } from "@/lib/axios";
 import { requestTypeLabel } from "@/lib/labels";
 import { claimFirstTooltip, needsClaimFirst } from "./claimable";
+import { useAuth } from "@/features/auth/useAuth";
+import { usePermission } from "@/features/auth/usePermission";
 import { toast } from "@/lib/toast";
 import { apiErrorMessage } from "@/lib/apiError";
 import { Modal } from "@/components/ui/Modal";
@@ -35,11 +38,18 @@ export function RequestDecisionDialog({
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
 
+  const { user } = useAuth();
+  const { hasPermission } = usePermission();
+  const canOverride =
+    (user?.roles ?? []).includes("SUPER_ADMIN") ||
+    hasPermission(PERMISSIONS.APPROVAL_OVERRIDE);
+
   const confirmDisabled =
     action === "REJECTED" && reason.trim().length === 0;
 
-  // Defensive: a ROLE-targeted request must be claimed before deciding.
-  const mustClaim = needsClaimFirst(request);
+  // Defensive: a ROLE-targeted request must be claimed before deciding —
+  // except for the override authority, which may decide it directly.
+  const mustClaim = !canOverride && needsClaimFirst(request);
 
   async function handleDecide() {
     setError(null);

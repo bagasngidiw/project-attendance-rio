@@ -82,6 +82,7 @@ export const PERMISSIONS = {
   OVERRIDE_CUTOFF: "platform:override_cutoff",
 
   APPROVAL_CONFIG_MANAGE: "approval_config:manage",
+  APPROVAL_OVERRIDE: "approval:override",
 
   HIERARCHY_VIEW: "hierarchy:view",
   HIERARCHY_MANAGE: "hierarchy:manage",

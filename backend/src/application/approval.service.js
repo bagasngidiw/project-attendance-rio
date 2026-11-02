@@ -26,6 +26,10 @@ const {
 } = require("../domain/approval-policy");
 const { hasPermission } = require("../domain/permissions");
 const {
+  canOverrideApprovals,
+  canSeeAllApprovalHistory,
+} = require("../domain/approval-access");
+const {
   NotFoundError,
   ValidationError,
   PermissionDeniedError,
@@ -81,9 +85,22 @@ class ApprovalService {
    */
   async enrichNames(dto) {
     if (!this.userRepository) return dto;
+    // Override decisions may not have a top-level approverId (role-targeted
+    // requests start unassigned). Fall back to the embedded assignment and
+    // the actual decision-maker so the approver column is never misleading.
+    //
+    // Legacy documents can carry free-text/synthetic actor ids. Only resolve
+    // well-formed ObjectIds so one dirty row cannot fail the whole list.
+    const approverId = objectIdOrNull(
+      dto.approval?.assignedUserId ??
+        dto.approval?.approvedBy ??
+        dto.approval?.rejectedBy ??
+        dto.approverId
+    );
+    const requesterId = objectIdOrNull(dto.requesterId);
     const [requester, approver] = await Promise.all([
-      dto.requesterId ? this.userRepository.findById(dto.requesterId) : null,
-      dto.approverId ? this.userRepository.findById(dto.approverId) : null,
+      requesterId ? this.userRepository.findById(requesterId) : null,
+      approverId ? this.userRepository.findById(approverId) : null,
     ]);
     return {
       ...dto,
@@ -124,12 +141,11 @@ class ApprovalService {
    * @param {{ type?: string, status?: string, employeeId?: string, from?: string, to?: string, page?: number, pageSize?: number }} filters
    */
   async listUnified(actor = {}, filters = {}) {
-    // Superadmin oversees every request type and is the designated override
-    // authority, so the inbox is company-wide instead of assignment-scoped.
-    // This is the list-level half of the override: the decision itself is
-    // already permitted by ApprovalEngineService.decide().
-    const isSuperAdmin = (actor.actorRoleKeys ?? []).includes("SUPER_ADMIN");
-    if (isSuperAdmin) {
+    // The designated override authority sees every request type/status and
+    // every requester, so the inbox is company-wide instead of
+    // assignment-scoped. This is the list-level half of the override; the
+    // decision itself is enforced by decide() below.
+    if (canOverrideApprovals(actor)) {
       const { items, total } = await this.requestRepository.findWithFilters({
         requesterId: filters.employeeId || undefined,
         // "ALL" removes the status filter so the superadmin can audit every
@@ -215,15 +231,8 @@ class ApprovalService {
    * @param {{ type?: string, page?: number, pageSize?: number }} filters
    */
   async listHistoryUnified(actor = {}, filters = {}) {
-    // Superadmin always sees the company-wide decision history.
-    const seesAll =
-      (actor.actorRoleKeys ?? []).includes("SUPER_ADMIN") ||
-      (actor.actorPermissions ?? []).includes("*") ||
-      ["leave", "trip", "overtime", "permission", "sakit"].some((t) =>
-        hasPermission(actor.actorPermissions ?? [], `${t}:view_all`)
-      );
-
-    if (!seesAll) {
+    // Company-wide history: override authority or any module view-all holder.
+    if (!canSeeAllApprovalHistory(actor)) {
       return this.listHistory(actor.actorId, filters);
     }
     const { items, total } = await this.requestRepository.findWithFilters(
@@ -309,7 +318,7 @@ class ApprovalService {
     const isApprover = String(request.approverId) === String(actor.actorId);
     const isAdmin =
       (actor.actorRoleKeys ?? []).includes("HR_ADMIN") ||
-      (actor.actorRoleKeys ?? []).includes("SUPER_ADMIN");
+      canOverrideApprovals(actor);
 
     // A role-targeted request awaiting claim is visible to any eligible
     // approver who holds the type's approve permission — consistent with the
@@ -357,9 +366,10 @@ class ApprovalService {
     }
 
     // Data scope: only the assigned approver (or effective delegate) may
-    // decide — except SUPER_ADMIN, the designated override authority
-    // (agents.md §23). HR_ADMIN keeps the stricter assigned-only rule.
-    const isAdminOverride = (actor.actorRoleKeys ?? []).includes("SUPER_ADMIN");
+    // decide — except the designated override authority (SUPER_ADMIN role,
+    // wildcard, or explicit approval:override). HR_ADMIN keeps the stricter
+    // assigned-only rule.
+    const isAdminOverride = canOverrideApprovals(actor);
     let delegatedDecision = false;
     if (!isAdminOverride && String(request.approverId) !== String(actor.actorId)) {
       const effective = this.delegationService
@@ -381,9 +391,11 @@ class ApprovalService {
     // No self-approval (FR-057 foundation).
     assertNoSelfApproval(request.requesterId, actor.actorId);
 
-    // Permission for the request's type (defense in depth behind the route gate).
+    // Permission for the request's type (defense in depth behind the route
+    // gate). The explicit company-wide override capability supersedes the
+    // per-type key — it is a granted, auditable privilege.
     const permissionKey = `${request.type.toLowerCase()}:approve`;
-    if (!hasPermission(actor.actorPermissions ?? [], permissionKey)) {
+    if (!isAdminOverride && !hasPermission(actor.actorPermissions ?? [], permissionKey)) {
       throw new PermissionDeniedError(permissionKey);
     }
 
@@ -634,6 +646,13 @@ function isApprovalBlockedCompat(normalizedRule, now, calendar) {
   // eslint-disable-next-line global-require
   const { isApprovalBlocked } = require("../domain/approval-policy");
   return isApprovalBlocked({}, now, normalizedRule, calendar);
+}
+
+/** Returns the 24-char ObjectId string, or null for legacy/malformed values. */
+function objectIdOrNull(value) {
+  if (!value) return null;
+  const id = String(value);
+  return /^[a-fA-F0-9]{24}$/.test(id) ? id : null;
 }
 
 module.exports = { ApprovalService };
