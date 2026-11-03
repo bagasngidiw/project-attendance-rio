@@ -1,23 +1,15 @@
 /**
- * deploy.js — automated production deployment via FTP (AUTO_DEPLOY_PROD.md).
+ * deploy.js — verified production deployment via FTP.
  *
- * Reads credentials from the local root `.env` file (never prints them):
- *   FTP_HOST, FTP_USER, FTP_PASSWORD, FTP_PORT,
- *   REMOTE_BACKEND_PATH (default /backend_app), REMOTE_FRONTEND_PATH (default /public_html)
+ * The cPanel Passenger supervisor is not reliable for this application. The
+ * deployment therefore uploads a restart request for the server-side cron
+ * watchdog in backend/ops/restart.sh and waits for an acknowledgement before
+ * reporting success.
  *
- * Flow:
- *   1. One-time purge of legacy directories/files inside REMOTE_FRONTEND_PATH
- *      (tolerant: missing items are skipped).
- *   2. Sync ./backend -> REMOTE_BACKEND_PATH (excludes node_modules, .git,
- *      .env, uploads, logs, local runtime upload dirs, and the two local
- *      provisioning seed scripts that embed deployment credentials).
- *   3. Sync ./frontend/dist -> REMOTE_FRONTEND_PATH (production build).
- *   4. Upload the committed CloudLinux Passenger/React SPA .htaccess from
- *      ./frontend/public into REMOTE_FRONTEND_PATH.
- *   5. Signal Phusion Passenger to reload the Express app by (re)touching
- *      REMOTE_BACKEND_PATH/tmp/restart.txt.
- *
- * Usage: npm run deploy
+ * Usage:
+ *   npm run deploy
+ *   npm run deploy -- --purge-legacy
+ *   npm run deploy -- --skip-build
  */
 
 "use strict";
@@ -27,8 +19,18 @@ require("dotenv").config();
 const path = require("path");
 const os = require("os");
 const fs = require("fs");
+const http = require("http");
+const https = require("https");
+const { execFileSync } = require("child_process");
 const FtpDeploy = require("ftp-deploy");
 const ftp = require("basic-ftp");
+
+const ROOT = __dirname;
+const FRONTEND_ROOT = path.join(ROOT, "frontend");
+const FRONTEND_DIST = path.join(FRONTEND_ROOT, "dist");
+const FRONTEND_HTACCESS = path.join(FRONTEND_ROOT, "public", ".htaccess");
+const RESTART_SCRIPT = path.join(ROOT, "backend", "ops", "restart.sh");
+const args = new Set(process.argv.slice(2));
 
 const config = {
   host: process.env.FTP_HOST,
@@ -37,14 +39,37 @@ const config = {
   port: Number(process.env.FTP_PORT) || 21,
   backendRoot: process.env.REMOTE_BACKEND_PATH || "/backend_app",
   frontRoot: process.env.REMOTE_FRONTEND_PATH || "/public_html",
+  expectedBackendRoot:
+    process.env.EXPECTED_REMOTE_BACKEND_PATH || "/backend_app",
+  expectedFrontendRoot:
+    process.env.EXPECTED_REMOTE_FRONTEND_PATH || "/public_html",
+  expectedApiHost: process.env.EXPECTED_API_HOST || "api.simbika.com",
+  healthUrl:
+    process.env.DEPLOY_HEALTH_URL || "https://api.simbika.com/health",
+  restartTimeoutMs: Number(process.env.DEPLOY_RESTART_TIMEOUT_MS) || 180_000,
+  pollIntervalMs: Number(process.env.DEPLOY_POLL_INTERVAL_MS) || 5_000,
 };
 
 if (!config.host || !config.user || !config.password) {
-  console.error("[deploy] ABORT: FTP_HOST / FTP_USER / FTP_PASSWORD must be set in the root .env");
-  process.exit(1);
+  throw new Error(
+    "FTP_HOST / FTP_USER / FTP_PASSWORD must be set in the root .env"
+  );
 }
 
-// One-time remote legacy removal list (AUTO_DEPLOY_PROD.md §One-Time).
+if (config.backendRoot !== config.expectedBackendRoot) {
+  throw new Error(
+    `REMOTE_BACKEND_PATH must be ${config.expectedBackendRoot}; received ${config.backendRoot}`
+  );
+}
+
+if (config.frontRoot !== config.expectedFrontendRoot) {
+  throw new Error(
+    `REMOTE_FRONTEND_PATH must be ${config.expectedFrontendRoot}; received ${config.frontRoot}`
+  );
+}
+
+// Explicitly opt-in legacy cleanup. Normal deployments must not delete
+// unrelated public_html content.
 const PURGE_DIRS = [
   ".well-known", "amkp", "api", "api-server", "approval", "cgi-bin",
   "dashboard.simbika.com", "data", "data-pelamar", "demo", "forms",
@@ -60,28 +85,22 @@ const PURGE_FILES = [
   "underconstructions.html", "visitor.txt",
 ];
 
-// Backend upload exclusions (spec) + local runtime uploads (the server keeps
-// its own) + the local MongoDB data directory (never upload DB binaries) +
-// root-level scratch *.txt test-output files (dev artifacts) + local
-// provisioning scripts that embed deployment credentials.
-//
-// Note: minimatch's globstar (`**`) does NOT match dot-directories (e.g.
-// node_modules/.bin, node_modules/*/.github) unless `dot: true`, so the
-// explicit `**/.*` patterns below are required to exclude them.
+// Never upload secrets, dependencies, databases, runtime uploads, local logs,
+// deployment acknowledgements, or local test artifacts.
 const BACKEND_EXCLUDES = [
   "node_modules/**", "node_modules/**/*",
   "node_modules/**/.*", "node_modules/**/.*/**", "node_modules/**/.*/**/*",
   ".git/**", ".git/**/*",
-  // cPanel-managed API routing, CORS, and environment configuration.
+  // cPanel-managed backend routing/environment configuration.
   ".htaccess",
-  // Local MongoDB data — never upload database binaries to production.
   ".mongo-data/**", ".mongo-data/**/*",
   ".env", ".env.*",
   "uploads/**", "uploads/**/*",
   "logs/**", "logs/**/*",
   "*.log",
-  // Root-level scratch test-output files (e.g. full-r*.txt, bit*.txt).
   "*.txt",
+  "tmp/**", "tmp/**/*",
+  "app.pid", "app.log",
   "attendance-media/**", "attendance-media/**/*",
   "branding-assets/**", "branding-assets/**/*",
   "attachment-assets/**", "attachment-assets/**/*",
@@ -90,49 +109,141 @@ const BACKEND_EXCLUDES = [
   "scripts/reset-and-seed-tad-simbika.js",
 ];
 
-// Keep the hosting-specific Passenger configuration in version control and
-// upload that exact file explicitly. ftp-deploy's glob does not reliably
-// include dotfiles, and generating a second .htaccess here previously
-// overwrote the CloudLinux Passenger directives.
-const FRONTEND_HTACCESS = path.join(__dirname, "frontend", "public", ".htaccess");
-
-function log(...args) {
-  console.log("[deploy]", ...args);
+function log(...messages) {
+  console.log("[deploy]", ...messages);
 }
 
-function logError(...args) {
-  console.error("[deploy]", ...args);
+function logError(...messages) {
+  console.error("[deploy]", ...messages);
 }
 
-function tempFile(name, content) {
-  const file = path.join(os.tmpdir(), name);
-  fs.writeFileSync(file, content);
+function sleep(milliseconds) {
+  return new Promise((resolve) => setTimeout(resolve, milliseconds));
+}
+
+function temporaryFile(prefix, content = "") {
+  const file = path.join(
+    os.tmpdir(),
+    `${prefix}-${process.pid}-${Date.now()}-${Math.random().toString(16).slice(2)}`
+  );
+  fs.writeFileSync(file, content, "utf8");
   return file;
 }
 
-/** Purges the legacy removal list under a remote root (tolerant). */
-async function purgeLegacy(client, remoteRoot) {
-  for (const dir of PURGE_DIRS) {
-    try {
-      await client.removeDir(path.posix.join(remoteRoot, dir));
-      log(`purged dir  ${dir}`);
-    } catch (err) {
-      log(`skip dir   ${dir} (${err.message})`);
+function removeFileQuietly(file) {
+  try {
+    fs.unlinkSync(file);
+  } catch {
+    // The temporary file may already have been removed.
+  }
+}
+
+function runFrontendBuild() {
+  const npmCommand = process.platform === "win32" ? "npm.cmd" : "npm";
+  log("building frontend...");
+  execFileSync(npmCommand, ["run", "build"], {
+    cwd: FRONTEND_ROOT,
+    stdio: "inherit",
+  });
+  log("frontend build completed");
+}
+
+function collectFiles(directory) {
+  if (!fs.existsSync(directory)) return [];
+
+  const files = [];
+  for (const entry of fs.readdirSync(directory, { withFileTypes: true })) {
+    const fullPath = path.join(directory, entry.name);
+    if (entry.isDirectory()) {
+      files.push(...collectFiles(fullPath));
+    } else if (entry.isFile()) {
+      files.push(fullPath);
     }
   }
+  return files;
+}
+
+function verifyFrontendBuild() {
+  const indexFile = path.join(FRONTEND_DIST, "index.html");
+  const assetsDirectory = path.join(FRONTEND_DIST, "assets");
+
+  if (!fs.existsSync(indexFile)) {
+    throw new Error(`frontend build is missing ${indexFile}`);
+  }
+
+  const javascriptFiles = collectFiles(assetsDirectory).filter((file) =>
+    file.toLowerCase().endsWith(".js")
+  );
+
+  if (javascriptFiles.length === 0) {
+    throw new Error("frontend build contains no JavaScript assets");
+  }
+
+  const bundleContents = javascriptFiles.map((file) => fs.readFileSync(file, "utf8"));
+  const forbiddenLocalHosts = ["http://localhost:5000", "http://127.0.0.1:5000"];
+  const localHostAsset = bundleContents.find((content) =>
+    forbiddenLocalHosts.some((host) => content.includes(host))
+  );
+
+  if (localHostAsset) {
+    throw new Error(
+      "frontend production bundle contains a localhost API URL; check frontend/.env.production"
+    );
+  }
+
+  const expectedHost = config.expectedApiHost.replace(/^https?:\/\//, "");
+  if (!bundleContents.some((content) => content.includes(expectedHost))) {
+    throw new Error(
+      `frontend production bundle does not contain the expected API host ${expectedHost}`
+    );
+  }
+
+  log(`frontend build verified (${javascriptFiles.length} JavaScript asset(s))`);
+}
+
+function gitOutput(args) {
+  try {
+    return execFileSync("git", args, {
+      cwd: ROOT,
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "ignore"],
+    }).trim();
+  } catch {
+    return "";
+  }
+}
+
+function createDeployId() {
+  const revision = gitOutput(["rev-parse", "--short", "HEAD"]) || "manual";
+  const dirty = gitOutput(["status", "--porcelain"]) ? "-dirty" : "";
+  return `${revision}${dirty}-${new Date().toISOString().replace(/[^0-9TZ]/g, "")}`;
+}
+
+/** Purge the legacy removal list under a remote root (tolerant). */
+async function purgeLegacy(client, remoteRoot) {
+  for (const directory of PURGE_DIRS) {
+    try {
+      await client.removeDir(path.posix.join(remoteRoot, directory));
+      log(`purged dir  ${directory}`);
+    } catch (error) {
+      log(`skip dir   ${directory} (${error.message})`);
+    }
+  }
+
   for (const file of PURGE_FILES) {
     try {
       await client.remove(path.posix.join(remoteRoot, file));
       log(`purged file ${file}`);
-    } catch (err) {
-      log(`skip file  ${file} (${err.message})`);
+    } catch (error) {
+      log(`skip file  ${file} (${error.message})`);
     }
   }
 }
 
-/** Syncs a local directory tree to a remote path via ftp-deploy (with retry). */
+/** Sync a local directory tree to a remote path via ftp-deploy. */
 async function syncDir(localRoot, remoteRoot, exclude, label, attempts = 12) {
-  let lastErr;
+  let lastError;
+
   for (let attempt = 1; attempt <= attempts; attempt += 1) {
     const deployer = new FtpDeploy();
     try {
@@ -150,19 +261,23 @@ async function syncDir(localRoot, remoteRoot, exclude, label, attempts = 12) {
       });
       log(`${label} synced -> ${remoteRoot}`);
       return;
-    } catch (err) {
-      lastErr = err;
-      log(`${label} attempt ${attempt}/${attempts} failed (${err.message}); retrying...`);
-      await new Promise((resolve) => setTimeout(resolve, 5000));
+    } catch (error) {
+      lastError = error;
+      log(
+        `${label} attempt ${attempt}/${attempts} failed (${error.message}); retrying...`
+      );
+      await sleep(5_000);
     }
   }
-  throw lastErr;
+
+  throw lastError;
 }
 
-/** Basic-FTP helper: connect + purge + uploads, then close. */
-async function withFtpClient(fn) {
+/** Basic-FTP helper: connect, run a callback, then close. */
+async function withFtpClient(callback) {
   const client = new ftp.Client(60_000);
   client.ftp.verbose = false;
+
   try {
     await client.access({
       host: config.host,
@@ -171,35 +286,137 @@ async function withFtpClient(fn) {
       port: config.port,
       secure: false,
     });
-    await fn(client);
+    return await callback(client);
   } finally {
     client.close();
   }
 }
 
+async function uploadText(remotePath, content) {
+  const localFile = temporaryFile("deploy-upload", content);
+  try {
+    await withFtpClient(async (client) => {
+      await client.ensureDir(path.posix.dirname(remotePath));
+      await client.uploadFrom(localFile, remotePath);
+    });
+  } finally {
+    removeFileQuietly(localFile);
+  }
+}
+
+async function uploadFile(remotePath, localPath, { normalizeLineEndings = false } = {}) {
+  if (!fs.existsSync(localPath)) {
+    throw new Error(`required deployment file is missing: ${localPath}`);
+  }
+
+  let sourcePath = localPath;
+  let temporarySource;
+
+  if (normalizeLineEndings) {
+    const content = fs.readFileSync(localPath, "utf8").replace(/\r\n?/g, "\n");
+    temporarySource = temporaryFile("deploy-normalized", content);
+    sourcePath = temporarySource;
+  }
+
+  try {
+    await withFtpClient(async (client) => {
+      await client.ensureDir(path.posix.dirname(remotePath));
+      await client.uploadFrom(sourcePath, remotePath);
+    });
+  } finally {
+    if (temporarySource) removeFileQuietly(temporarySource);
+  }
+}
+
+async function readRemoteText(remotePath) {
+  const localFile = temporaryFile("deploy-download");
+  try {
+    await withFtpClient((client) => client.downloadTo(localFile, remotePath));
+    return fs.readFileSync(localFile, "utf8").trim();
+  } catch {
+    return null;
+  } finally {
+    removeFileQuietly(localFile);
+  }
+}
+
+async function waitForRestartAcknowledgement(deployId) {
+  const remoteDonePath = path.posix.join(
+    config.backendRoot,
+    "tmp",
+    "restart.done"
+  );
+  const deadline = Date.now() + config.restartTimeoutMs;
+  let nextProgressLog = Date.now();
+
+  while (Date.now() < deadline) {
+    const acknowledgedId = await readRemoteText(remoteDonePath);
+    if (acknowledgedId === deployId) {
+      log(`backend restart acknowledged: ${deployId}`);
+      return;
+    }
+
+    if (Date.now() >= nextProgressLog) {
+      log("waiting for cPanel cron watchdog to restart the backend...");
+      nextProgressLog = Date.now() + 15_000;
+    }
+
+    await sleep(config.pollIntervalMs);
+  }
+
+  throw new Error(
+    `backend restart was not acknowledged within ${config.restartTimeoutMs / 1000}s; check ${config.backendRoot}/ops/restart.log and app.log`
+  );
+}
+
+function requestStatus(url) {
+  const client = url.startsWith("https:") ? https : http;
+
+  return new Promise((resolve, reject) => {
+    const request = client.get(url, (response) => {
+      response.resume();
+      resolve(response.statusCode || 0);
+    });
+
+    request.setTimeout(15_000, () => {
+      request.destroy(new Error(`request timed out: ${url}`));
+    });
+    request.on("error", reject);
+  });
+}
+
+async function verifyProductionHealth() {
+  const status = await requestStatus(config.healthUrl);
+  if (status !== 200) {
+    throw new Error(`production health check returned HTTP ${status}`);
+  }
+  log(`production health verified: ${config.healthUrl} -> HTTP ${status}`);
+}
+
 /**
- * Removes a stale/conflicting remote entry (a FILE or an EMPTY directory)
- * named `node_modules` under the backend root. A file or empty dir named
- * node_modules (e.g. from a failed server-side `npm ci`) breaks both this
- * deploy (mkdir "File exists") and a future `npm ci`. A node_modules with
- * real content is never touched. Missing node_modules is a no-op.
+ * Removes a stale/conflicting remote node_modules entry. A file or empty
+ * directory named node_modules can block future server-side npm installation.
+ * A populated node_modules directory is never touched.
  */
 async function cleanupBackendNodeModules() {
   const target = path.posix.join(config.backendRoot, "node_modules");
+
   await withFtpClient(async (client) => {
     let parentEntries;
     try {
       parentEntries = await client.list(config.backendRoot);
-    } catch (err) {
-      log(`cannot list backend root (${err.message})`);
+    } catch (error) {
+      log(`cannot list backend root (${error.message})`);
       return;
     }
-    const nm = parentEntries.find((e) => e.name === "node_modules");
-    if (!nm) {
+
+    const nodeModulesEntry = parentEntries.find((entry) => entry.name === "node_modules");
+    if (!nodeModulesEntry) {
       log("no remote node_modules to clean");
       return;
     }
-    if (nm.isDirectory) {
+
+    if (nodeModulesEntry.isDirectory) {
       const inner = await client.list(target);
       if (inner.length > 0) {
         log("remote node_modules has content — leaving it untouched");
@@ -207,69 +424,80 @@ async function cleanupBackendNodeModules() {
       }
       await client.removeDir(target);
       log("removed conflicting empty node_modules directory");
-    } else {
-      await client.remove(target);
-      log("removed conflicting node_modules file entry");
+      return;
     }
+
+    await client.remove(target);
+    log("removed conflicting node_modules file entry");
   });
 }
 
 (async () => {
+  const purgeLegacy = args.has("--purge-legacy");
+  const skipBuild = args.has("--skip-build");
+  const deployId = createDeployId();
+
   log(`host=${config.host} backend=${config.backendRoot} front=${config.frontRoot}`);
+  log(`deployment id=${deployId}`);
 
-  // 1) One-time legacy purge.
-  log("purging legacy files...");
-  await withFtpClient((client) => purgeLegacy(client, config.frontRoot));
+  if (!skipBuild) {
+    runFrontendBuild();
+  } else {
+    log("skipping frontend build because --skip-build was supplied");
+  }
+  verifyFrontendBuild();
 
-  // 1b) Remove a conflicting/stale remote node_modules (file or empty dir)
-  // so the backend sync and a later server-side npm ci can succeed.
+  if (!fs.existsSync(FRONTEND_HTACCESS)) {
+    throw new Error(`required frontend .htaccess is missing: ${FRONTEND_HTACCESS}`);
+  }
+  if (!fs.existsSync(RESTART_SCRIPT)) {
+    throw new Error(`required restart watchdog is missing: ${RESTART_SCRIPT}`);
+  }
+
+  if (purgeLegacy) {
+    log("purging explicitly requested legacy files...");
+    await withFtpClient((client) => purgeLegacy(client, config.frontRoot));
+  } else {
+    log("skipping legacy purge; use --purge-legacy to enable it");
+  }
+
   await cleanupBackendNodeModules();
 
-  // 2) Backend sync.
   log("syncing backend...");
   await syncDir(
-    path.join(__dirname, "backend"),
+    path.join(ROOT, "backend"),
     config.backendRoot,
     BACKEND_EXCLUDES,
     "backend"
   );
 
-  // 3) Frontend production build sync.
-  const dist = path.join(__dirname, "frontend", "dist");
-  if (!fs.existsSync(dist)) {
-    logError("ABORT: ./frontend/dist missing — run `npm run build` in ./frontend first.");
-    process.exit(1);
-  }
   log("syncing frontend build...");
-  await syncDir(dist, config.frontRoot, [".git/**"], "frontend");
+  await syncDir(FRONTEND_DIST, config.frontRoot, [".git/**"], "frontend");
 
-  // 4) Upload the committed Passenger + SPA .htaccess. This must not be
-  // replaced by a generated rewrite file: the Passenger directives are what
-  // connect the production request path to /home/simbika1/backend.
-  log("uploading .htaccess...");
-  if (!fs.existsSync(FRONTEND_HTACCESS)) {
-    logError(`ABORT: committed frontend .htaccess missing at ${FRONTEND_HTACCESS}`);
-    process.exit(1);
-  }
-  await withFtpClient((client) =>
-    client.uploadFrom(FRONTEND_HTACCESS, path.posix.join(config.frontRoot, ".htaccess"))
+  log("uploading authoritative frontend .htaccess...");
+  await uploadFile(
+    path.posix.join(config.frontRoot, ".htaccess"),
+    FRONTEND_HTACCESS
   );
-  log(".htaccess uploaded");
 
-  // 5) Passenger restart signal.
-  log("signalling Passenger restart...");
-  const restartLocal = tempFile(
-    "deploy-restart.txt",
-    `# touched ${new Date().toISOString()} — Phusion Passenger reload\n`
+  log("uploading normalized backend restart watchdog...");
+  await uploadFile(
+    path.posix.join(config.backendRoot, "ops", "restart.sh"),
+    RESTART_SCRIPT,
+    { normalizeLineEndings: true }
   );
-  await withFtpClient(async (client) => {
-    await client.ensureDir(path.posix.join(config.backendRoot, "tmp"));
-    await client.uploadFrom(restartLocal, path.posix.join(config.backendRoot, "tmp", "restart.txt"));
-  });
-  log("restart.txt touched");
 
-  log("done.");
-})().catch((err) => {
-  logError("failed:", err.message);
-  process.exit(1);
+  log("requesting controlled backend restart...");
+  await uploadText(
+    path.posix.join(config.backendRoot, "tmp", "restart.request"),
+    `${deployId}\n`
+  );
+
+  await waitForRestartAcknowledgement(deployId);
+  await verifyProductionHealth();
+
+  log("deployment completed and backend verification passed");
+})().catch((error) => {
+  logError("failed:", error.message);
+  process.exitCode = 1;
 });

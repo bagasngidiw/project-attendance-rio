@@ -1,21 +1,33 @@
-# DO NOT REMOVE. CLOUDLINUX PASSENGER CONFIGURATION BEGIN
-PassengerAppRoot "/home/simbika1/backend"
-PassengerBaseURI "/"
-PassengerNodejs "/home/simbika1/nodevenv/backend/20/bin/node"
-PassengerAppType node
-PassengerStartupFile server.js
-# DO NOT REMOVE. CLOUDLINUX PASSENGER CONFIGURATION END
+# React SPA routing for the static frontend served from /public_html.
+# The production frontend calls https://api.simbika.com directly; this file
+# must not hand /api requests to the broken legacy Passenger mapping.
 
 <IfModule mod_rewrite.c>
   RewriteEngine On
   RewriteBase /
 
-  # 1. Allow Passenger to handle ALL /api requests directly (including static assets)
-  RewriteRule ^api/(.*)$ - [L]
-
-  # 2. React SPA Fallback for regular web routes
+  # Never rewrite the real entry point.
   RewriteRule ^index\.html$ - [L]
-  RewriteCond %{REQUEST_FILENAME} !-f
-  RewriteCond %{REQUEST_FILENAME} !-d
-  RewriteRule . /index.html [L]
+
+  # Let Apache/LiteSpeed serve existing files and directories normally.
+  RewriteCond %{REQUEST_FILENAME} -f [OR]
+  RewriteCond %{REQUEST_FILENAME} -d
+  RewriteRule ^ - [L]
+
+  # React Router fallback for browser routes.
+  RewriteRule ^ /index.html [L]
+</IfModule>
+
+<IfModule mod_headers.c>
+  # Always discover the newest Vite asset manifest after deployment.
+  <FilesMatch "^index\.html$">
+    Header always set Cache-Control "no-cache, no-store, must-revalidate"
+    Header always set Pragma "no-cache"
+    Header always set Expires "0"
+  </FilesMatch>
+
+  # Vite filenames are content-hashed and safe to cache for a long time.
+  <FilesMatch "\.(?:js|css|woff2?|png|jpe?g|gif|svg|webp|ico)$">
+    Header always set Cache-Control "public, max-age=31536000, immutable"
+  </FilesMatch>
 </IfModule>

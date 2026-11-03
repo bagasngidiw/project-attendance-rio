@@ -1327,12 +1327,46 @@ Remaining (out of scope, hosting/env tasks):
 
 #### Deployment Note
 
-- The production API is a manually started `node server.js` process.
-  `deploy.js` only touches `backend/tmp/restart.txt`, which the broken Passenger
-  supervisor does not consume. After `npm run deploy`, restart the Node process
-  manually and hard-refresh the browser.
+- The production API remains a manually supervised `node server.js` process
+  until the host-level Passenger issue is repaired. The deployment tooling now
+  uploads a unique `backend/tmp/restart.request` marker and relies on the
+  server-side `backend/ops/restart.sh` cron watchdog to stop duplicate copies,
+  start exactly one production process, and write `backend/tmp/restart.done`
+  after `/health` succeeds. The old `tmp/restart.txt` signal is no longer the
+  authoritative restart mechanism.
+- The watchdog is implemented locally but is not production-verified until the
+  cPanel cron job is installed and one normal deployment completes its
+  restart/health handshake. Until then, do not run the new deployment command.
 - The boot seed backfills `approval:override` onto the existing `SUPER_ADMIN`
   role. If the operational account uses the `ADMIN` role instead of
   `SUPER_ADMIN`, grant `approval:override` explicitly through the RBAC console
   (or use the seeded SUPER_ADMIN account). Do not grant it to every
   `*:view_all` holder.
+
+## Deployment Automation Fallback (2026-11-04)
+
+### Status
+
+- [x] Rename the legacy deployment instructions to `AUTO_DEPLOY_PROD_OLD.md`.
+- [x] Add `AUTO_DEPLOY_PROD_NEW.md` with the verified `/backend_app` paths and
+  cron/watchdog deployment flow.
+- [x] Make `deploy.js` build and validate the frontend, synchronize both
+  applications, upload a restart request, wait for acknowledgement, and verify
+  the public API health endpoint.
+- [x] Add `backend/ops/restart.sh` for single-process restart and crash/reboot
+  recovery.
+- [x] Remove the stale main-domain Passenger mapping from the frontend SPA
+  `.htaccess` and add frontend cache-control rules.
+- [ ] Install the cPanel cron job and complete the first live deployment
+  handshake.
+
+### Remaining Operator Action
+
+After the developer changes are complete, add this one cPanel Cron Job:
+
+```text
+* * * * * /bin/bash /home/simbika1/backend_app/ops/restart.sh >> /home/simbika1/backend_app/ops/restart.log 2>&1
+```
+
+Then run the normal deployment and verify that exactly one backend process is
+running and `https://api.simbika.com/health` returns HTTP 200.
