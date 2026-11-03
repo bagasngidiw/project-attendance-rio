@@ -21,7 +21,7 @@ const os = require("os");
 const fs = require("fs");
 const http = require("http");
 const https = require("https");
-const { execFileSync } = require("child_process");
+const { execFileSync, execSync } = require("child_process");
 const FtpDeploy = require("ftp-deploy");
 const ftp = require("basic-ftp");
 
@@ -139,12 +139,10 @@ function removeFileQuietly(file) {
 }
 
 function runFrontendBuild() {
-  const npmCommand = process.platform === "win32" ? "npm.cmd" : "npm";
   log("building frontend...");
-  execFileSync(npmCommand, ["run", "build"], {
-    cwd: FRONTEND_ROOT,
-    stdio: "inherit",
-  });
+  // Directly spawning npm.cmd fails with EINVAL on Windows. A shell command
+  // string works on every platform.
+  execSync("npm run build", { cwd: FRONTEND_ROOT, stdio: "inherit" });
   log("frontend build completed");
 }
 
